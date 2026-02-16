@@ -72,10 +72,12 @@ jobs:
         with:
           python-version: "3.14"
 
-      - name: Install runtime dependencies
+      - name: Install build and runtime dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends ffmpeg
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ffmpeg \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 
       - name: Install from PyPI
         run: |
