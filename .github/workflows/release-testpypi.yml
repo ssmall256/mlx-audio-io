@@ -1,0 +1,171 @@
+name: Release RC (TestPyPI)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to publish and verify (for example: 1.0.1rc1)"
+        required: true
+        type: string
+
+jobs:
+  build-artifacts:
+    name: Build RC artifacts
+    runs-on: ubuntu-24.04
+    env:
+      UV_LINK_MODE: copy
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+
+      - name: Install packaging tools
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate metadata
+        run: python -m twine check dist/*
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist/*
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    runs-on: ubuntu-24.04
+    needs: [build-artifacts]
+    steps:
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist
+
+      - name: Publish package distributions to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+
+  smoke-linux-x86_64:
+    name: Smoke install from TestPyPI (Linux x86_64)
+    runs-on: ubuntu-24.04
+    needs: [publish-testpypi]
+    env:
+      PACKAGE_VERSION: ${{ github.event.inputs.version }}
+      MLX_DEVICE: cpu
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Install from TestPyPI
+        run: |
+          python -m pip install --upgrade pip
+          for i in {1..12}; do
+            python -m pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple \
+              "mlx-audio-io==${PACKAGE_VERSION}" && break
+            if [ "$i" -eq 12 ]; then
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Smoke test
+        run: |
+          python -c "import os, tempfile; import mlx.core as mx; import mlx_audio_io as aio; x = mx.zeros((512, 1), dtype=mx.float32); fd, p = tempfile.mkstemp(suffix='.wav'); os.close(fd); aio.save(p, x, 16000); y, sr = aio.load(p); meta = aio.info(p); chunks = list(aio.stream(p, chunk_frames=128)); assert sr == 16000; assert meta.sample_rate == 16000; assert y.shape[1] == 1; assert len(chunks) > 0; os.unlink(p)"
+
+  smoke-linux-arm64:
+    name: Smoke install from TestPyPI (Linux arm64)
+    runs-on: ubuntu-24.04-arm
+    needs: [publish-testpypi]
+    env:
+      PACKAGE_VERSION: ${{ github.event.inputs.version }}
+      MLX_DEVICE: cpu
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build and runtime dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ffmpeg \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+
+      - name: Install from TestPyPI
+        run: |
+          python -m pip install --upgrade pip
+          for i in {1..12}; do
+            python -m pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple \
+              "mlx-audio-io==${PACKAGE_VERSION}" && break
+            if [ "$i" -eq 12 ]; then
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Smoke test
+        run: |
+          python -c "import os, tempfile; import mlx.core as mx; import mlx_audio_io as aio; x = mx.zeros((512, 1), dtype=mx.float32); fd, p = tempfile.mkstemp(suffix='.wav'); os.close(fd); aio.save(p, x, 16000); y, sr = aio.load(p); meta = aio.info(p); chunks = list(aio.stream(p, chunk_frames=128)); assert sr == 16000; assert meta.sample_rate == 16000; assert y.shape[1] == 1; assert len(chunks) > 0; os.unlink(p)"
+
+  smoke-macos:
+    name: Smoke install from TestPyPI (macOS)
+    runs-on: macos-14
+    needs: [publish-testpypi]
+    env:
+      PACKAGE_VERSION: ${{ github.event.inputs.version }}
+      MLX_DEVICE: cpu
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build and runtime dependencies
+        run: brew install cmake ninja ffmpeg
+
+      - name: Install from TestPyPI
+        run: |
+          python -m pip install --upgrade pip
+          for i in {1..12}; do
+            python -m pip install \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple \
+              "mlx-audio-io==${PACKAGE_VERSION}" && break
+            if [ "$i" -eq 12 ]; then
+              exit 1
+            fi
+            sleep 10
+          done
+
+      - name: Smoke test
+        run: |
+          python -c "import os, tempfile; import mlx.core as mx; import mlx_audio_io as aio; x = mx.zeros((512, 1), dtype=mx.float32); fd, p = tempfile.mkstemp(suffix='.wav'); os.close(fd); aio.save(p, x, 16000); y, sr = aio.load(p); meta = aio.info(p); chunks = list(aio.stream(p, chunk_frames=128)); assert sr == 16000; assert meta.sample_rate == 16000; assert y.shape[1] == 1; assert len(chunks) > 0; os.unlink(p)"

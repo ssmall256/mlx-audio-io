@@ -1,0 +1,233 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+jobs:
+  linux-x86_64:
+    name: Linux (x86_64)
+    runs-on: ubuntu-24.04
+    env:
+      UV_LINK_MODE: copy
+      MLX_DEVICE: cpu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ffmpeg \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+
+      - name: Install project dependencies
+        run: uv sync --extra dev
+
+      - name: Run Linux supported test suite
+        run: uv run pytest -q -m "not apple_only"
+
+  linux-arm64:
+    name: Linux (arm64)
+    runs-on: ubuntu-24.04-arm
+    env:
+      UV_LINK_MODE: copy
+      MLX_DEVICE: cpu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ffmpeg \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+
+      - name: Install project dependencies
+        run: uv sync --extra dev
+
+      - name: Run Linux supported test suite
+        run: uv run pytest -q -m "not apple_only"
+
+  macos:
+    name: macOS (Full)
+    runs-on: macos-14
+    env:
+      UV_LINK_MODE: copy
+      MLX_DEVICE: cpu
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v4
+
+      - name: Install system dependencies
+        run: |
+          brew install cmake ninja ffmpeg
+
+      - name: Install project dependencies
+        run: uv sync --extra dev
+
+      - name: Run full test suite
+        run: uv run pytest -q
+
+  packaging:
+    name: Packaging (sdist + wheel metadata)
+    runs-on: ubuntu-24.04
+    needs: [linux-x86_64, linux-arm64, macos]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+
+      - name: Install packaging tools
+        run: python -m pip install --upgrade pip build twine
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Validate metadata
+        run: python -m twine check dist/*
+
+      - name: Upload dist artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist/*
+
+  smoke-linux-x86_64:
+    name: Smoke install (Linux x86_64 wheel)
+    runs-on: ubuntu-24.04
+    needs: [packaging]
+    env:
+      MLX_DEVICE: cpu
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install runtime system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends ffmpeg
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist
+
+      - name: Install wheel artifact
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install dist/*.whl
+
+      - name: Smoke test
+        run: |
+          python -c "import os, tempfile; import mlx.core as mx; import mlx_audio_io as aio; x = mx.zeros((512, 1), dtype=mx.float32); fd, p = tempfile.mkstemp(suffix='.wav'); os.close(fd); aio.save(p, x, 16000); y, sr = aio.load(p); meta = aio.info(p); chunks = list(aio.stream(p, chunk_frames=128)); assert sr == 16000; assert meta.sample_rate == 16000; assert y.shape[1] == 1; assert len(chunks) > 0; os.unlink(p)"
+
+  smoke-linux-arm64:
+    name: Smoke install (Linux arm64 wheel)
+    runs-on: ubuntu-24.04-arm
+    needs: [packaging]
+    env:
+      MLX_DEVICE: cpu
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build and runtime system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ffmpeg \
+            libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist
+
+      - name: Build and install wheel from sdist
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build --wheel --outdir wheelhouse dist/*.tar.gz
+          python -m pip install wheelhouse/*.whl
+
+      - name: Smoke test
+        run: |
+          python -c "import os, tempfile; import mlx.core as mx; import mlx_audio_io as aio; x = mx.zeros((512, 1), dtype=mx.float32); fd, p = tempfile.mkstemp(suffix='.wav'); os.close(fd); aio.save(p, x, 16000); y, sr = aio.load(p); meta = aio.info(p); chunks = list(aio.stream(p, chunk_frames=128)); assert sr == 16000; assert meta.sample_rate == 16000; assert y.shape[1] == 1; assert len(chunks) > 0; os.unlink(p)"
+
+  smoke-macos:
+    name: Smoke install (macOS wheel)
+    runs-on: macos-14
+    needs: [packaging]
+    env:
+      MLX_DEVICE: cpu
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install build and runtime system dependencies
+        run: |
+          brew install cmake ninja ffmpeg
+
+      - name: Download dist artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist-artifacts
+          path: dist
+
+      - name: Build and install wheel from sdist
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install build
+          python -m build --wheel --outdir wheelhouse dist/*.tar.gz
+          python -m pip install wheelhouse/*.whl
+
+      - name: Smoke test
+        run: |
+          python -c "import os, tempfile; import mlx.core as mx; import mlx_audio_io as aio; x = mx.zeros((512, 1), dtype=mx.float32); fd, p = tempfile.mkstemp(suffix='.wav'); os.close(fd); aio.save(p, x, 16000); y, sr = aio.load(p); meta = aio.info(p); chunks = list(aio.stream(p, chunk_frames=128)); assert sr == 16000; assert meta.sample_rate == 16000; assert y.shape[1] == 1; assert len(chunks) > 0; os.unlink(p)"

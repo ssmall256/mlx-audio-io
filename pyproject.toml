@@ -1,0 +1,48 @@
+[build-system]
+requires = [
+    "scikit-build-core>=0.10",
+    "nanobind>=2.0.0,<2.11",
+    "mlx==0.30.6; platform_system == 'Darwin'",
+    "mlx[cpu]==0.30.6; platform_system == 'Linux'",
+]
+build-backend = "build_backend"
+backend-path = ["."]
+
+[project]
+name = "mlx-audio-io"
+version = "1.0.0"
+description = "Native audio I/O for MLX on macOS and Linux"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = [
+    "mlx==0.30.6; platform_system == 'Darwin'",
+    "mlx[cpu]==0.30.6; platform_system == 'Linux'",
+    "pytest>=9.0.2",
+]
+
+[project.urls]
+Repository = "https://github.com/ssmall256/mlx-audio-io"
+Issues = "https://github.com/ssmall256/mlx-audio-io/issues"
+
+[project.optional-dependencies]
+dev = ["pytest"]
+benchmark = [
+    "librosa",
+    "soundfile",
+    "numpy",
+    "psutil",
+    "torch",
+    "torchaudio",
+    "torchcodec; platform_system != 'Linux' or (platform_machine != 'aarch64' and platform_machine != 'arm64')",
+]
+
+[tool.scikit-build]
+wheel.packages = ["python/mlx_audio_io"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "apple_only: Requires the macOS AudioToolbox backend",
+    "linux_mvp: Covered by Linux backend support matrix",
+]

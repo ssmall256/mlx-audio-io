@@ -1,0 +1,265 @@
+"""Tests for mlx_audio_io.load()."""
+
+import os
+import tempfile
+
+import mlx.core as mx
+import pytest
+from mlx_audio_io import batch_load, load, save
+
+pytestmark = pytest.mark.linux_mvp
+
+
+class TestLoadBasic:
+    def test_shape_mono_file(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k)
+        assert sr == 16000
+        assert audio.dtype == mx.float32
+        assert audio.ndim == 2
+        assert audio.shape == (16000, 1)
+
+    def test_shape_stereo_file(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1)
+        assert sr == 44100
+        assert audio.shape == (44100, 2)
+
+    def test_float32_file(self, float32_stereo_48k):
+        audio, sr = load(float32_stereo_48k)
+        assert sr == 48000
+        assert audio.shape == (48000, 2)
+        assert audio.dtype == mx.float32
+
+
+class TestLoadAiff:
+    def test_load_aiff(self, pcm16_stereo_44k1_aiff):
+        audio, sr = load(pcm16_stereo_44k1_aiff)
+        assert sr == 44100
+        assert audio.dtype == mx.float32
+        assert audio.shape == (44100, 2)
+
+    def test_load_aiff_mono(self, pcm16_stereo_44k1_aiff):
+        audio, sr = load(pcm16_stereo_44k1_aiff, mono=True)
+        assert sr == 44100
+        assert audio.shape == (44100, 1)
+
+    def test_load_aiff_offset_duration_resample(self, pcm16_stereo_44k1_aiff):
+        audio, sr = load(
+            pcm16_stereo_44k1_aiff, offset=0.25, duration=0.5, sr=16000
+        )
+        assert sr == 16000
+        assert abs(audio.shape[0] - 8000) <= 2
+        assert audio.shape[1] == 2
+
+
+class TestLoadExtendedOffsets:
+    def test_load_flac_offset_duration(self):
+        sr = 24000
+        frames = sr * 2
+        t = mx.arange(frames) / sr
+        audio = mx.reshape(mx.sin(2.0 * 3.141592653589793 * 220.0 * t), [frames, 1])
+        mx.eval(audio)
+
+        with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
+            path = f.name
+
+        try:
+            save(path, audio, sr)
+            sliced, sliced_sr = load(path, offset=0.5, duration=0.75)
+            assert sliced_sr == sr
+            assert sliced.shape[1] == 1
+            assert abs(sliced.shape[0] - int(0.75 * sr)) <= 2
+        finally:
+            os.unlink(path)
+
+
+class TestLoadLayouts:
+    def test_channels_last(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, layout="channels_last")
+        assert audio.shape == (44100, 2)
+
+    def test_channels_first(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, layout="channels_first")
+        assert audio.shape == (2, 44100)
+
+    def test_channels_first_mono_file(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, layout="channels_first")
+        assert audio.shape == (1, 16000)
+
+    def test_invalid_layout(self, pcm16_mono_16k):
+        with pytest.raises(ValueError):
+            load(pcm16_mono_16k, layout="invalid")
+
+
+class TestLoadMono:
+    def test_mono_from_stereo(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, mono=True)
+        assert audio.shape == (44100, 1)
+
+    def test_mono_from_mono(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, mono=True)
+        assert audio.shape == (16000, 1)
+
+    def test_mono_channels_first(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, mono=True, layout="channels_first")
+        assert audio.shape == (1, 44100)
+
+    def test_mono_values_are_average(self, pcm16_stereo_44k1):
+        """Mono should be average of channels (for identical channels, same as original)."""
+        stereo, _ = load(pcm16_stereo_44k1)
+        mono, _ = load(pcm16_stereo_44k1, mono=True)
+        mx.eval(stereo, mono)
+        # Since both channels have the same sine, mono should be close to either channel
+        left = stereo[:, 0]
+        mx.eval(left)
+        max_diff = mx.max(mx.abs(mono[:, 0] - left)).item()
+        assert max_diff < 1e-4
+
+
+class TestLoadOffsetDuration:
+    def test_offset_zero(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, offset=0.0)
+        assert audio.shape[0] == 16000
+
+    def test_offset_half(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, offset=0.5)
+        assert audio.shape[0] == 8000
+
+    def test_duration(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, duration=0.5)
+        assert audio.shape[0] == 8000
+
+    def test_offset_plus_duration(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, offset=0.25, duration=0.5)
+        assert audio.shape[0] == 8000
+
+    def test_duration_exceeds_remainder(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, offset=0.5, duration=2.0)
+        assert audio.shape[0] == 8000
+
+    def test_offset_beyond_end(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, offset=5.0)
+        assert audio.shape[0] == 0
+        assert audio.shape[1] == 1
+
+    def test_negative_offset_raises(self, pcm16_mono_16k):
+        with pytest.raises(ValueError):
+            load(pcm16_mono_16k, offset=-1.0)
+
+    def test_negative_duration_raises(self, pcm16_mono_16k):
+        with pytest.raises(ValueError):
+            load(pcm16_mono_16k, duration=-1.0)
+
+    def test_zero_duration_raises(self, pcm16_mono_16k):
+        with pytest.raises(ValueError):
+            load(pcm16_mono_16k, duration=0.0)
+
+
+class TestLoadResample:
+    def test_resample_up(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, sr=32000)
+        assert sr == 32000
+        # Should have roughly double the frames
+        assert abs(audio.shape[0] - 32000) <= 1
+
+    def test_resample_down(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, sr=16000)
+        assert sr == 16000
+        assert abs(audio.shape[0] - 16000) <= 1
+
+
+class TestLoadFloat16:
+    def test_dtype_and_shape(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, dtype="float16")
+        assert audio.dtype == mx.float16
+        assert audio.shape == (16000, 1)
+        assert sr == 16000
+
+    def test_mono(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, dtype="float16", mono=True)
+        assert audio.dtype == mx.float16
+        assert audio.shape == (44100, 1)
+
+    def test_channels_first(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, dtype="float16", layout="channels_first")
+        assert audio.dtype == mx.float16
+        assert audio.shape == (2, 44100)
+
+    def test_values_close_to_float32(self, pcm16_mono_16k):
+        f32, _ = load(pcm16_mono_16k, dtype="float32")
+        f16, _ = load(pcm16_mono_16k, dtype="float16")
+        mx.eval(f32, f16)
+        max_diff = mx.max(mx.abs(f32 - f16.astype(mx.float32))).item()
+        assert max_diff < 2e-3
+
+    def test_empty_array_dtype(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, offset=999.0, dtype="float16")
+        assert audio.dtype == mx.float16
+        assert audio.shape[0] == 0
+
+
+class TestLoadResampleQuality:
+    def test_default_produces_valid_output(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality="default")
+        assert sr == 16000
+        assert abs(audio.shape[0] - 16000) <= 1
+
+    def test_fastest_produces_valid_output(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality="fastest")
+        assert sr == 16000
+        assert abs(audio.shape[0] - 16000) <= 1
+
+    def test_best_produces_valid_output(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality="best")
+        assert sr == 16000
+        assert abs(audio.shape[0] - 16000) <= 1
+
+    def test_ignored_when_no_resample(self, pcm16_mono_16k):
+        """quality setting should not error when sr matches native."""
+        audio, sr = load(pcm16_mono_16k, resample_quality="best")
+        assert sr == 16000
+        assert audio.shape[0] == 16000
+
+    def test_invalid_raises(self, pcm16_mono_16k):
+        with pytest.raises(ValueError):
+            load(pcm16_mono_16k, resample_quality="invalid")
+
+    def test_all_levels(self, pcm16_stereo_44k1):
+        for level in ("default", "fastest", "low", "medium", "high", "best"):
+            audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality=level)
+            assert sr == 16000
+            assert audio.shape[0] > 0
+
+
+class TestLoadErrors:
+    def test_file_not_found(self):
+        with pytest.raises(FileNotFoundError):
+            load("/nonexistent/path.wav")
+
+    def test_unsupported_dtype(self, pcm16_mono_16k):
+        with pytest.raises(ValueError):
+            load(pcm16_mono_16k, dtype="int16")
+
+    def test_non_positive_sr(self, pcm16_mono_16k):
+        with pytest.raises(ValueError, match="sr must be > 0"):
+            load(pcm16_mono_16k, sr=0)
+
+
+class TestBatchLoad:
+    def test_results_match_sequential(self, pcm16_mono_16k, pcm16_stereo_44k1):
+        """batch_load results should match individual load calls."""
+        paths = [pcm16_mono_16k, pcm16_stereo_44k1]
+        results = batch_load(paths)
+        assert len(results) == 2
+
+        for i, path in enumerate(paths):
+            expected_audio, expected_sr = load(path)
+            mx.eval(expected_audio, results[i][0])
+            assert results[i][1] == expected_sr
+            assert results[i][0].shape == expected_audio.shape
+            max_diff = mx.max(mx.abs(results[i][0] - expected_audio)).item()
+            assert max_diff < 1e-5
+
+    def test_correct_count(self, pcm16_mono_16k):
+        paths = [pcm16_mono_16k] * 3
+        results = batch_load(paths)
+        assert len(results) == 3
