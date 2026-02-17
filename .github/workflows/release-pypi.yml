@@ -47,6 +47,9 @@ jobs:
     name: Publish to PyPI
     runs-on: ubuntu-24.04
     needs: [build-artifacts]
+    environment: pypi
+    permissions:
+      id-token: write
     steps:
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
@@ -57,7 +60,7 @@ jobs:
       - name: Publish package distributions to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
-          password: ${{ secrets.PYPI_API_TOKEN }}
+          attestations: true
 
   smoke-linux-x86_64:
     name: Smoke install from PyPI (Linux x86_64)

@@ -49,6 +49,9 @@ jobs:
     name: Publish to TestPyPI
     runs-on: ubuntu-24.04
     needs: [build-artifacts]
+    environment: testpypi
+    permissions:
+      id-token: write
     steps:
       - name: Download dist artifacts
         uses: actions/download-artifact@v4
@@ -60,7 +63,7 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
-          password: ${{ secrets.TEST_PYPI_API_TOKEN }}
+          attestations: true
 
   smoke-linux-x86_64:
     name: Smoke install from TestPyPI (Linux x86_64)
