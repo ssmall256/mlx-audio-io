@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.24)
-project(mlx_audio_io LANGUAGES CXX)
+project(mlx_audio_io LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -73,8 +73,37 @@ if(APPLE AND TARGET mlx)
 endif()
 
 set(BACKEND_SOURCES)
+set(LAME_SOURCES)
 if(APPLE)
     list(APPEND BACKEND_SOURCES src/cpp/audio_backend_apple.cpp)
+    set(LAME_SOURCES
+        src/vendor/lame/libmp3lame/VbrTag.c
+        src/vendor/lame/libmp3lame/bitstream.c
+        src/vendor/lame/libmp3lame/encoder.c
+        src/vendor/lame/libmp3lame/fft.c
+        src/vendor/lame/libmp3lame/gain_analysis.c
+        src/vendor/lame/libmp3lame/id3tag.c
+        src/vendor/lame/libmp3lame/lame.c
+        src/vendor/lame/libmp3lame/mpglib_interface.c
+        src/vendor/lame/libmp3lame/newmdct.c
+        src/vendor/lame/libmp3lame/presets.c
+        src/vendor/lame/libmp3lame/psymodel.c
+        src/vendor/lame/libmp3lame/quantize.c
+        src/vendor/lame/libmp3lame/quantize_pvt.c
+        src/vendor/lame/libmp3lame/reservoir.c
+        src/vendor/lame/libmp3lame/set_get.c
+        src/vendor/lame/libmp3lame/tables.c
+        src/vendor/lame/libmp3lame/takehiro.c
+        src/vendor/lame/libmp3lame/util.c
+        src/vendor/lame/libmp3lame/vbrquantize.c
+        src/vendor/lame/libmp3lame/version.c
+    )
+    # LAME is C code: compile as C, enable config.h, suppress warnings
+    set_source_files_properties(${LAME_SOURCES} PROPERTIES
+        LANGUAGE C
+        COMPILE_DEFINITIONS "HAVE_CONFIG_H"
+        COMPILE_OPTIONS "-w"
+    )
 elseif(UNIX)
     list(APPEND BACKEND_SOURCES src/cpp/audio_backend_linux.cpp)
 else()
@@ -93,11 +122,18 @@ nanobind_add_module(
     src/cpp/audio_io.cpp
     src/cpp/audio_stream.cpp
     src/cpp/mp3_decoder.cpp
+    src/cpp/mp3_encoder.cpp
     src/cpp/linux_libav_probe.cpp
     ${BACKEND_SOURCES}
+    ${LAME_SOURCES}
 )
 
-target_include_directories(_core PRIVATE src/cpp src/vendor/minimp3)
+target_include_directories(_core PRIVATE
+    src/cpp
+    src/vendor/minimp3
+    src/vendor/lame
+    src/vendor/lame/libmp3lame
+)
 target_link_libraries(_core PRIVATE mlx)
 if(APPLE)
     target_link_libraries(_core PRIVATE "-framework AudioToolbox" "-framework Accelerate")

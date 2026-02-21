@@ -1,6 +1,7 @@
 #include "audio_backend.h"
 #include "internal_utils.h"
 #include "mp3_decoder.h"
+#include "mp3_encoder.h"
 #include "osstatus.h"
 #include "raii_audio.h"
 
@@ -96,7 +97,7 @@ int parse_resample_quality(const std::string& quality) {
 /// Output format info parsed from file extension.
 struct OutputFormat {
     AudioFileTypeID file_type;
-    enum Kind { PCM, AAC, FLAC, ALAC } kind;
+    enum Kind { PCM, AAC, FLAC, ALAC, MP3 } kind;
 };
 
 /// Map file extension to AudioFileTypeID and format kind.
@@ -114,9 +115,59 @@ OutputFormat parse_output_format(const std::string& path) {
     if (ext == ".aiff" || ext == ".aif") return {kAudioFileAIFFType, OutputFormat::PCM};
     if (ext == ".caf")  return {kAudioFileCAFType, OutputFormat::PCM};
     if (ext == ".flac") return {kAudioFileFLACType, OutputFormat::FLAC};
+    if (ext == ".mp3")  return {kAudioFileMP3Type, OutputFormat::MP3};
     throw value_error(
         "Unsupported output format '" + ext +
-        "'. Supported: .wav, .m4a, .aiff, .caf, .flac");
+        "'. Supported: .wav, .mp3, .m4a, .aiff, .caf, .flac");
+}
+
+/// Parse MP3 bitrate string to kbps. Returns 0 for "auto".
+int parse_mp3_bitrate_kbps(const std::string& s) {
+    if (s == "auto") return 0;
+    if (s.size() >= 2 && (s.back() == 'k' || s.back() == 'K')) {
+        try {
+            int kbps = std::stoi(s.substr(0, s.size() - 1));
+            if (kbps > 0) return kbps;
+        } catch (...) {}
+    }
+    throw value_error(
+        "Invalid bitrate/subtype '" + s +
+        "' for MP3. Use 'auto', '128k', '192k', '256k', or '320k'.");
+}
+
+/// Encode and write MP3 via vendored LAME encoder.
+void save_mp3_lame(
+    const std::string& path,
+    const float* write_data,
+    int frames,
+    int channels,
+    int sr,
+    const std::string& bitrate) {
+
+    int bitrate_kbps = parse_mp3_bitrate_kbps(bitrate);
+
+    ScopedMp3Encoder encoder;
+    encoder.init(sr, channels, bitrate_kbps);
+
+    // Encode in chunks to limit peak memory
+    constexpr int kChunkFrames = 131072;
+    int cursor = 0;
+    while (cursor < frames) {
+        int chunk = std::min(kChunkFrames, frames - cursor);
+        encoder.encode(write_data + static_cast<size_t>(cursor) * channels, chunk);
+        cursor += chunk;
+    }
+    encoder.flush();
+
+    // Write accumulated MP3 bytes to file
+    std::unique_ptr<FILE, decltype(&fclose)> f(fopen(path.c_str(), "wb"), fclose);
+    if (!f) {
+        throw std::runtime_error("Failed to open output file for writing: " + path);
+    }
+    size_t wrote = fwrite(encoder.data(), 1, encoder.size(), f.get());
+    if (wrote != encoder.size()) {
+        throw std::runtime_error("Failed to write MP3 data to: " + path);
+    }
 }
 
 /// Create an AAC AudioStreamBasicDescription.
@@ -974,6 +1025,14 @@ void backend_save_audio(
                     "bitrate is not supported when encoding='alac' for .m4a");
             }
             break;
+        case OutputFormat::MP3:
+            if (encoding != "auto" && encoding != "float32" && encoding != "pcm16") {
+                throw value_error(
+                    "Unsupported encoding '" + encoding +
+                    "' for .mp3. Use 'auto', 'float32', or 'pcm16'.");
+            }
+            parse_mp3_bitrate_kbps(bitrate);  // throws on invalid
+            break;
     }
 
     // Determine frames and channels from shape + layout
@@ -1017,6 +1076,12 @@ void backend_save_audio(
         float lo = -1.0f, hi = 1.0f;
         vDSP_vclip(interleaved.get(), 1, &lo, &hi, interleaved.get(), 1,
                     static_cast<vDSP_Length>(total));
+    }
+
+    // MP3: use vendored LAME encoder (AudioToolbox has no MP3 encoder)
+    if (out_fmt.kind == OutputFormat::MP3) {
+        save_mp3_lame(path, write_data, frames, channels, sr, bitrate);
+        return;
     }
 
     // --- Set up file format ---
@@ -1065,6 +1130,9 @@ void backend_save_audio(
         case OutputFormat::ALAC:
             file_fmt = make_alac_format(sr, channels);
             needs_client_format = true;
+            break;
+        case OutputFormat::MP3:
+            // Unreachable: MP3 is handled by early return above
             break;
     }
 

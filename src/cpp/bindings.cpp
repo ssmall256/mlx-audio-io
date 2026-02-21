@@ -47,7 +47,8 @@ NB_MODULE(_core, m) {
         .def_prop_ro("chunk_frames", &mlx_audio::AudioStreamReader::chunk_frames)
         .def_prop_ro("frames_read", &mlx_audio::AudioStreamReader::frames_read)
         .def("at_eof", &mlx_audio::AudioStreamReader::at_eof)
-        .def("read_chunk", &mlx_audio::AudioStreamReader::read_chunk)
+        .def("read_chunk", &mlx_audio::AudioStreamReader::read_chunk,
+             nb::call_guard<nb::gil_scoped_release>())
         .def("__iter__", [](mlx_audio::AudioStreamReader& self) -> mlx_audio::AudioStreamReader& {
             return self;
         }, nb::rv_policy::reference)
@@ -55,7 +56,10 @@ NB_MODULE(_core, m) {
             if (self.at_eof()) {
                 throw nb::stop_iteration();
             }
-            auto result = self.read_chunk();
+            auto result = [&] {
+                nb::gil_scoped_release release;
+                return self.read_chunk();
+            }();
             if (result.first.shape(0) == 0) {
                 throw nb::stop_iteration();
             }
@@ -131,9 +135,13 @@ Raises:
           R"(Save an mlx.core.array to an audio file.
 
 Output support is backend-dependent:
-- macOS backend: WAV (.wav), M4A/AAC (.m4a), FLAC (.flac), AIFF (.aiff), CAF (.caf).
+- macOS backend: WAV (.wav), MP3 (.mp3), M4A/AAC (.m4a), FLAC (.flac), AIFF (.aiff), CAF (.caf).
 - Linux backend: WAV (.wav), MP3 (.mp3), M4A/AAC (.m4a), FLAC (.flac), AIFF (.aiff), CAF (.caf).
 The format is determined by the file extension.
+
+The GIL is released during save, so this function can run on a background
+thread without blocking the Python interpreter. Any pending mlx.core.eval()
+is performed internally — callers do not need to evaluate the array first.
 
 Args:
     path: Output file path. Extension determines format.
@@ -142,7 +150,7 @@ Args:
     layout: 'channels_last' or 'channels_first'.
     encoding: Sample encoding — 'float32' (default), 'pcm16', or 'alac' (Apple Lossless for .m4a).
     bitrate: Lossy encode bitrate — 'auto' (default), '128k', '192k', '256k', '320k'.
-             Used for .m4a AAC output and Linux .mp3 output.
+             Used for .m4a AAC and .mp3 output.
     clip: If True, clamp samples to [-1, 1] before writing.
 
 Raises:

@@ -407,6 +407,10 @@ std::pair<mlx::core::array, int> load_via_libav(
         interleaved.reserve(65536);
     }
 
+    // Reusable buffers for the decode/convert loop — avoids per-frame heap churn
+    std::vector<float> conv_chunk;
+    std::vector<const uint8_t*> conv_in_data;
+
     auto append_converted_frame = [&](const AVFrame* src_frame) {
         if (!src_frame || src_frame->nb_samples <= 0) return;
         int64_t delay = swr_get_delay(swr_ctx.get(), native_sr);
@@ -417,23 +421,23 @@ std::pair<mlx::core::array, int> load_via_libav(
             AV_ROUND_UP));
         if (out_samples <= 0) return;
 
-        std::vector<float> chunk(
-            static_cast<size_t>(out_samples) * static_cast<size_t>(native_channels));
+        size_t needed = static_cast<size_t>(out_samples) * static_cast<size_t>(native_channels);
+        conv_chunk.resize(needed);
         uint8_t* out_data[1] = {
-            reinterpret_cast<uint8_t*>(chunk.data())
+            reinterpret_cast<uint8_t*>(conv_chunk.data())
         };
         const bool planar = av_sample_fmt_is_planar(
             static_cast<AVSampleFormat>(src_frame->format)) != 0;
         const int plane_count = planar ? native_channels : 1;
-        std::vector<const uint8_t*> in_data(static_cast<size_t>(plane_count));
+        conv_in_data.resize(static_cast<size_t>(plane_count));
         for (int i = 0; i < plane_count; ++i) {
-            in_data[static_cast<size_t>(i)] = src_frame->extended_data[i];
+            conv_in_data[static_cast<size_t>(i)] = src_frame->extended_data[i];
         }
         int converted = swr_convert(
             swr_ctx.get(),
             out_data,
             out_samples,
-            in_data.data(),
+            conv_in_data.data(),
             src_frame->nb_samples);
         if (converted < 0) {
             throw value_error(
@@ -441,8 +445,8 @@ std::pair<mlx::core::array, int> load_via_libav(
                 " (" + av_error_to_string(converted) + ")");
         }
         if (converted == 0) return;
-        chunk.resize(static_cast<size_t>(converted) * static_cast<size_t>(native_channels));
-        interleaved.insert(interleaved.end(), chunk.begin(), chunk.end());
+        size_t emit = static_cast<size_t>(converted) * static_cast<size_t>(native_channels);
+        interleaved.insert(interleaved.end(), conv_chunk.begin(), conv_chunk.begin() + emit);
     };
 
     while (true) {
@@ -507,10 +511,10 @@ std::pair<mlx::core::array, int> load_via_libav(
             native_sr,
             AV_ROUND_UP));
         if (out_samples <= 0) break;
-        std::vector<float> chunk(
-            static_cast<size_t>(out_samples) * static_cast<size_t>(native_channels));
+        size_t needed = static_cast<size_t>(out_samples) * static_cast<size_t>(native_channels);
+        conv_chunk.resize(needed);
         uint8_t* out_data[1] = {
-            reinterpret_cast<uint8_t*>(chunk.data())
+            reinterpret_cast<uint8_t*>(conv_chunk.data())
         };
         int converted = swr_convert(
             swr_ctx.get(),
@@ -524,8 +528,8 @@ std::pair<mlx::core::array, int> load_via_libav(
                 " (" + av_error_to_string(converted) + ")");
         }
         if (converted == 0) break;
-        chunk.resize(static_cast<size_t>(converted) * static_cast<size_t>(native_channels));
-        interleaved.insert(interleaved.end(), chunk.begin(), chunk.end());
+        size_t emit = static_cast<size_t>(converted) * static_cast<size_t>(native_channels);
+        interleaved.insert(interleaved.end(), conv_chunk.begin(), conv_chunk.begin() + emit);
     }
 
     if (interleaved.empty()) {
@@ -849,9 +853,18 @@ void save_via_libav(
     int64_t cursor = 0;
     int64_t next_pts = 0;
 
+    // Allocate a single reusable frame for the encode loop
+    auto out_frame = allocate_libav_encode_frame(codec_ctx.get(), frame_chunk);
+
     while (cursor < frames) {
         int in_samples = static_cast<int>(std::min<int64_t>(frame_chunk, frames - cursor));
-        auto out_frame = allocate_libav_encode_frame(codec_ctx.get(), in_samples);
+
+        rc = av_frame_make_writable(out_frame.get());
+        if (rc < 0) {
+            throw value_error(
+                "Failed to make encoder frame writable on Linux backend via libav (" +
+                av_error_to_string(rc) + ")");
+        }
 
         const uint8_t* in_data[1] = {
             reinterpret_cast<const uint8_t*>(write_data + cursor * channels)
@@ -897,7 +910,13 @@ void save_via_libav(
         if (flush_samples <= 0) break;
         flush_samples = std::min(flush_samples, frame_chunk);
 
-        auto out_frame = allocate_libav_encode_frame(codec_ctx.get(), flush_samples);
+        rc = av_frame_make_writable(out_frame.get());
+        if (rc < 0) {
+            throw value_error(
+                "Failed to make encoder frame writable on Linux backend via libav (" +
+                av_error_to_string(rc) + ")");
+        }
+
         int converted = swr_convert(
             swr_ctx.get(),
             out_frame->data,

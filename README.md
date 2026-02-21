@@ -31,7 +31,7 @@ The public Python API is the same on both platforms: `load`, `save`, `info`, `st
 | `info(path)` | AudioToolbox-supported formats (WAV, MP3, M4A/AAC, FLAC, AIFF, CAF, etc.) | WAV, MP3, FLAC, M4A/AAC, AIFF, CAF |
 | `load(path)` | AudioToolbox-supported formats + native-rate MP3 fast path | WAV, MP3, FLAC, M4A/AAC, AIFF, CAF |
 | `load(..., sr=...)` | Supported, with AudioToolbox resampling | Supported (`WAV/MP3` native linear path, other supported formats via libav decode/resample) |
-| `save(path, ...)` | WAV, M4A/AAC, FLAC, AIFF, CAF | WAV, MP3, M4A/AAC, FLAC, AIFF, CAF |
+| `save(path, ...)` | WAV, MP3, M4A/AAC, FLAC, AIFF, CAF | WAV, MP3, M4A/AAC, FLAC, AIFF, CAF |
 | `encoding` | `float32`, `pcm16`, `alac` (for `.m4a`) | `float32`, `pcm16`, `alac` (for `.m4a`) |
 | `stream(path, ...)` | AudioToolbox-supported formats + native-rate MP3 path | WAV, MP3, FLAC, M4A/AAC, AIFF, CAF |
 | `stream(..., sr=...)` | Supported | Supported (`WAV/MP3` native linear path, other supported formats via libav-backed chunked decode path) |

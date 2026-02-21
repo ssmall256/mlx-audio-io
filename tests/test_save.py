@@ -434,10 +434,6 @@ class TestSaveM4A:
             save("/tmp/test.m4a", audio, 44100, encoding="alac", bitrate="128k")
 
 
-@pytest.mark.skipif(
-    sys.platform != "linux",
-    reason="MP3 save is currently supported on Linux backend only",
-)
 class TestSaveMP3:
     def test_roundtrip_mp3(self):
         sr = 44100
