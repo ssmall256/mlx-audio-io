@@ -148,7 +148,7 @@ Args:
     audio: 1D or 2D float32/float16 mlx array. 1D treated as mono.
     sr: Sample rate.
     layout: 'channels_last' or 'channels_first'.
-    encoding: Sample encoding — 'float32' (default), 'pcm16', or 'alac' (Apple Lossless for .m4a).
+    encoding: Sample encoding — 'float32' (default), 'pcm16', 'pcm24', or 'alac' (Apple Lossless for .m4a).
     bitrate: Lossy encode bitrate — 'auto' (default), '128k', '192k', '256k', '320k'.
              Used for .m4a AAC and .mp3 output.
     clip: If True, clamp samples to [-1, 1] before writing.

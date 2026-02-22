@@ -1399,28 +1399,53 @@ void write_interleaved_wav(
         return;
     }
 
-    uint32_t data_size = static_cast<uint32_t>(
-        static_cast<uint64_t>(frames) * channels * sizeof(int16_t));
-    write_wav_header(f.get(), sr, channels, 16, false, data_size);
+    if (wav_encoding == "pcm16") {
+        uint32_t data_size = static_cast<uint32_t>(
+            static_cast<uint64_t>(frames) * channels * sizeof(int16_t));
+        write_wav_header(f.get(), sr, channels, 16, false, data_size);
 
-    size_t total = static_cast<size_t>(frames) * channels;
-    std::unique_ptr<int16_t, decltype(&std::free)> pcm(
-        static_cast<int16_t*>(aligned_alloc_64(total * sizeof(int16_t))), std::free);
+        size_t total = static_cast<size_t>(frames) * channels;
+        std::unique_ptr<int16_t, decltype(&std::free)> pcm(
+            static_cast<int16_t*>(aligned_alloc_64(total * sizeof(int16_t))), std::free);
 
-    for (size_t i = 0; i < total; ++i) {
-        float x = write_data[i];
-        if (x <= -1.0f) {
-            pcm.get()[i] = static_cast<int16_t>(-32768);
-        } else if (x >= 1.0f) {
-            pcm.get()[i] = static_cast<int16_t>(32767);
-        } else {
-            pcm.get()[i] = static_cast<int16_t>(std::lrint(x * 32767.0f));
+        for (size_t i = 0; i < total; ++i) {
+            float x = write_data[i];
+            if (x <= -1.0f) {
+                pcm.get()[i] = static_cast<int16_t>(-32768);
+            } else if (x >= 1.0f) {
+                pcm.get()[i] = static_cast<int16_t>(32767);
+            } else {
+                pcm.get()[i] = static_cast<int16_t>(std::lrint(x * 32767.0f));
+            }
         }
-    }
 
-    size_t wrote = fwrite(pcm.get(), sizeof(int16_t), total, f.get());
-    if (wrote != total) {
-        throw std::runtime_error("Failed to write pcm16 WAV payload");
+        size_t wrote = fwrite(pcm.get(), sizeof(int16_t), total, f.get());
+        if (wrote != total) {
+            throw std::runtime_error("Failed to write pcm16 WAV payload");
+        }
+    } else {
+        // pcm24
+        uint32_t data_size = static_cast<uint32_t>(
+            static_cast<uint64_t>(frames) * channels * 3);
+        write_wav_header(f.get(), sr, channels, 24, false, data_size);
+
+        size_t total = static_cast<size_t>(frames) * channels;
+        for (size_t i = 0; i < total; ++i) {
+            float x = write_data[i];
+            int32_t s;
+            if (x <= -1.0f) {
+                s = -8388608;
+            } else if (x >= 1.0f) {
+                s = 8388607;
+            } else {
+                s = static_cast<int32_t>(std::lrint(x * 8388607.0f));
+            }
+            uint8_t bytes[3];
+            bytes[0] = static_cast<uint8_t>(s & 0xFF);
+            bytes[1] = static_cast<uint8_t>((s >> 8) & 0xFF);
+            bytes[2] = static_cast<uint8_t>((s >> 16) & 0xFF);
+            fwrite(bytes, 1, 3, f.get());
+        }
     }
 }
 
@@ -1642,10 +1667,10 @@ void backend_save_audio(
         if (wav_encoding == "auto") {
             wav_encoding = "float32";
         }
-        if (wav_encoding != "float32" && wav_encoding != "pcm16") {
+        if (wav_encoding != "float32" && wav_encoding != "pcm16" && wav_encoding != "pcm24") {
             throw value_error(
                 "Unsupported encoding '" + encoding +
-                "' for .wav on Linux backend. Use 'float32' or 'pcm16'.");
+                "' for .wav on Linux backend. Use 'float32', 'pcm16', or 'pcm24'.");
         }
 
         write_interleaved_wav(path, write_data, frames, channels, sr, wav_encoding);
@@ -1720,10 +1745,13 @@ void backend_save_audio(
         } else if (encoding == "pcm16") {
             transcode_codec = "pcm_s16be";
             libav_preferred_fmt = AV_SAMPLE_FMT_S16;
+        } else if (encoding == "pcm24") {
+            transcode_codec = "pcm_s24be";
+            libav_preferred_fmt = AV_SAMPLE_FMT_S32;
         } else {
             throw value_error(
                 "Unsupported encoding '" + encoding +
-                "' for .aiff on Linux backend. Use 'auto', 'float32', or 'pcm16'.");
+                "' for .aiff on Linux backend. Use 'auto', 'float32', 'pcm16', or 'pcm24'.");
         }
     } else if (ext == ".caf") {
         if (bitrate != "auto") {
@@ -1735,10 +1763,13 @@ void backend_save_audio(
         } else if (encoding == "pcm16") {
             transcode_codec = "pcm_s16le";
             libav_preferred_fmt = AV_SAMPLE_FMT_S16;
+        } else if (encoding == "pcm24") {
+            transcode_codec = "pcm_s24le";
+            libav_preferred_fmt = AV_SAMPLE_FMT_S32;
         } else {
             throw value_error(
                 "Unsupported encoding '" + encoding +
-                "' for .caf on Linux backend. Use 'auto', 'float32', or 'pcm16'.");
+                "' for .caf on Linux backend. Use 'auto', 'float32', 'pcm16', or 'pcm24'.");
         }
     } else {
         throw value_error(

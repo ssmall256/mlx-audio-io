@@ -164,6 +164,63 @@ class TestSavePcm16:
             os.unlink(path)
 
 
+class TestSavePcm24:
+    def test_save_pcm24_wav(self):
+        """Save pcm24 WAV, load back, verify subtype and round-trip."""
+        sr = 44100
+        frames = sr
+        t = mx.arange(frames) / sr
+        sine = mx.sin(2.0 * math.pi * 440.0 * t)
+        audio = mx.reshape(sine, [frames, 1])
+        mx.eval(audio)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            path = f.name
+
+        try:
+            save(path, audio, sr, encoding="pcm24")
+            meta = info(path)
+            assert meta.subtype == "pcm24"
+            assert meta.sample_rate == sr
+            assert meta.channels == 1
+            assert meta.frames == frames
+            loaded, loaded_sr = load(path)
+            mx.eval(loaded)
+            assert loaded_sr == sr
+            assert loaded.shape == (frames, 1)
+            max_diff = mx.max(mx.abs(loaded - audio)).item()
+            assert max_diff < 1e-6  # 24-bit quantization
+        finally:
+            os.unlink(path)
+
+    def test_save_pcm24_aiff(self):
+        """Save pcm24 AIFF, load back, verify subtype and round-trip."""
+        sr = 44100
+        frames = sr
+        t = mx.arange(frames) / sr
+        sine = mx.sin(2.0 * math.pi * 440.0 * t)
+        audio = mx.reshape(sine, [frames, 1])
+        mx.eval(audio)
+
+        with tempfile.NamedTemporaryFile(suffix=".aiff", delete=False) as f:
+            path = f.name
+
+        try:
+            save(path, audio, sr, encoding="pcm24")
+            meta = info(path)
+            assert meta.subtype == "pcm24"
+            assert meta.sample_rate == sr
+            assert meta.channels == 1
+            loaded, loaded_sr = load(path)
+            mx.eval(loaded)
+            assert loaded_sr == sr
+            assert loaded.shape == (frames, 1)
+            max_diff = mx.max(mx.abs(loaded - audio)).item()
+            assert max_diff < 1e-6  # 24-bit quantization
+        finally:
+            os.unlink(path)
+
+
 class TestSaveFloat16:
     def test_roundtrip_float16(self):
         """Save float16 audio, load back, verify shape and values."""
@@ -267,7 +324,7 @@ class TestSaveErrors:
         audio = mx.zeros([100, 1])
         mx.eval(audio)
         with pytest.raises(ValueError):
-            save("/tmp/test.wav", audio, 16000, encoding="pcm24")
+            save("/tmp/test.wav", audio, 16000, encoding="pcm8")
 
     def test_invalid_layout(self):
         audio = mx.zeros([100, 1])

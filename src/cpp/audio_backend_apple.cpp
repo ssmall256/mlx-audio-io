@@ -982,7 +982,7 @@ void backend_save_audio(
     if (out_fmt.kind == OutputFormat::AAC && encoding == "alac") {
         out_fmt.kind = OutputFormat::ALAC;
     }
-    if (out_fmt.file_type == kAudioFileAIFFType && encoding != "pcm16") {
+    if (out_fmt.file_type == kAudioFileAIFFType && encoding != "pcm16" && encoding != "pcm24") {
         // Float AIFF is represented as AIFC on Apple APIs.
         output_file_type = kAudioFileAIFCType;
     }
@@ -994,11 +994,11 @@ void backend_save_audio(
                 throw value_error(
                     "bitrate is only supported for encoded formats, not WAV/AIFF/CAF");
             }
-            if (encoding != "auto" && encoding != "float32" && encoding != "pcm16") {
+            if (encoding != "auto" && encoding != "float32" && encoding != "pcm16" && encoding != "pcm24") {
                 throw value_error(
                     "Unsupported encoding '" + encoding +
                     "' for " + path.substr(path.rfind('.')) +
-                    ". Use 'auto', 'float32', or 'pcm16'.");
+                    ". Use 'auto', 'float32', 'pcm16', or 'pcm24'.");
             }
             break;
         case OutputFormat::AAC:
@@ -1106,6 +1106,15 @@ void backend_save_audio(
                 }
                 file_fmt.mBitsPerChannel = 16;
                 file_fmt.mBytesPerFrame = static_cast<UInt32>(channels * 2);
+                needs_client_format = true;
+            } else if (encoding == "pcm24") {
+                file_fmt.mFormatFlags =
+                    kAudioFormatFlagIsSignedInteger | kAudioFormatFlagIsPacked;
+                if (is_aiff_family) {
+                    file_fmt.mFormatFlags |= kAudioFormatFlagIsBigEndian;
+                }
+                file_fmt.mBitsPerChannel = 24;
+                file_fmt.mBytesPerFrame = static_cast<UInt32>(channels * 3);
                 needs_client_format = true;
             } else {
                 file_fmt.mFormatFlags =
