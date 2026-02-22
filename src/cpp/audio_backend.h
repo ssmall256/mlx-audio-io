@@ -25,4 +25,10 @@ void backend_save_audio(
     const std::string& bitrate,
     bool clip);
 
+mlx::core::array backend_resample_audio(
+    mlx::core::array audio,
+    int in_sr,
+    int out_sr,
+    const std::string& quality);
+
 }  // namespace mlx_audio

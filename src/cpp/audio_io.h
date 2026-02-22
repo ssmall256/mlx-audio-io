@@ -53,4 +53,11 @@ void save_audio(
     const std::string& bitrate,
     bool clip);
 
+/// Resample an in-memory audio array to a different sample rate.
+mlx::core::array resample_audio(
+    mlx::core::array audio,
+    int in_sr,
+    int out_sr,
+    const std::string& quality);
+
 }  // namespace mlx_audio

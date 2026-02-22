@@ -3,7 +3,7 @@
 # Import mlx.core first to register nanobind type casters
 import mlx.core  # noqa: F401
 
-from ._core import AudioInfo, AudioStreamReader, info, load, stream
+from ._core import AudioInfo, AudioStreamReader, info, load, resample, stream
 from ._core import save as _save_core
 
 try:
@@ -53,6 +53,7 @@ def batch_load(paths, sr=None, mono=False, dtype="float32", num_workers=4):
 __all__ = [
     "load",
     "save",
+    "resample",
     "info",
     "stream",
     "batch_load",

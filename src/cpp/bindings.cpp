@@ -157,6 +157,31 @@ Raises:
     ValueError: For invalid arguments.
 )");
 
+    // resample()
+    m.def("resample", &mlx_audio::resample_audio,
+          "audio"_a,
+          "in_sr"_a,
+          "out_sr"_a,
+          "quality"_a = "default",
+          nb::call_guard<nb::gil_scoped_release>(),
+          R"(Resample an in-memory audio array to a different sample rate.
+
+Args:
+    audio: 1D (frames,) or 2D (frames, channels) float32/float16 mlx array.
+    in_sr: Source sample rate (must be > 0).
+    out_sr: Target sample rate (must be > 0).
+    quality: Resampler quality — 'default', 'fastest', 'low', 'medium', 'high', or 'best'.
+        On macOS, maps to AudioConverter quality levels.
+        On Linux, quality is accepted but resampling uses linear interpolation.
+
+Returns:
+    Resampled mlx array with same ndim and channel count.
+    Returns the input unchanged when in_sr == out_sr.
+
+Raises:
+    ValueError: For invalid arguments.
+)");
+
     // stream() factory function
     m.def("stream",
           [](const std::string& path,

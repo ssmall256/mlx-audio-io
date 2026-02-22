@@ -1246,4 +1246,147 @@ void backend_save_audio(
     ext_file.reset();
 }
 
+// ---------------------------------------------------------------------------
+// resample_audio — in-memory sample rate conversion via AudioConverter
+// ---------------------------------------------------------------------------
+
+mlx::core::array backend_resample_audio(
+    mlx::core::array audio,
+    int in_sr,
+    int out_sr,
+    const std::string& quality) {
+
+    // --- Validate ---
+    if (in_sr <= 0) {
+        throw value_error("in_sr must be > 0, got " + std::to_string(in_sr));
+    }
+    if (out_sr <= 0) {
+        throw value_error("out_sr must be > 0, got " + std::to_string(out_sr));
+    }
+    if (audio.dtype() != mlx::core::float32 && audio.dtype() != mlx::core::float16) {
+        throw value_error("audio must be float32 or float16");
+    }
+    if (audio.ndim() != 1 && audio.ndim() != 2) {
+        throw value_error(
+            "audio must be 1D or 2D, got ndim=" + std::to_string(audio.ndim()));
+    }
+    int quality_val = parse_resample_quality(quality);
+
+    // No-op
+    if (in_sr == out_sr) {
+        return audio;
+    }
+
+    // Upcast float16 → float32 and materialize
+    bool was_1d = (audio.ndim() == 1);
+    if (audio.dtype() == mlx::core::float16) {
+        audio = mlx::core::astype(audio, mlx::core::float32);
+    }
+    if (was_1d) {
+        audio = mlx::core::reshape(audio, {audio.shape(0), 1});
+    }
+    mlx::core::eval(audio);
+
+    int64_t in_frames = audio.shape(0);
+    int channels = audio.shape(1);
+    const float* in_data = audio.data<float>();
+
+    // Estimate output frame count
+    int64_t out_frames = static_cast<int64_t>(
+        std::ceil(static_cast<double>(in_frames) * out_sr / in_sr));
+
+    // --- Set up AudioConverter ---
+    auto in_fmt = make_client_format(in_sr, channels);
+    auto out_fmt = make_client_format(out_sr, channels);
+
+    AudioConverterRef converter = nullptr;
+    OSStatus status = AudioConverterNew(&in_fmt, &out_fmt, &converter);
+    if (status != noErr) {
+        throw std::runtime_error(
+            "Failed to create AudioConverter: OSStatus " + osstatus_to_string(status));
+    }
+
+    // Set quality if non-default
+    if (quality_val >= 0) {
+        UInt32 q = static_cast<UInt32>(quality_val);
+        AudioConverterSetProperty(
+            converter, kAudioConverterSampleRateConverterQuality,
+            sizeof(q), &q);
+    }
+
+    // --- Callback-based conversion ---
+    struct FeedState {
+        const float* data;
+        int64_t frames_remaining;
+        int channels;
+    };
+    FeedState state{in_data, in_frames, channels};
+
+    auto input_callback = [](
+        AudioConverterRef /*conv*/,
+        UInt32* num_packets,
+        AudioBufferList* buf_list,
+        AudioStreamPacketDescription** /*pkt_desc*/,
+        void* user_data) -> OSStatus {
+        auto* s = static_cast<FeedState*>(user_data);
+        if (s->frames_remaining <= 0) {
+            *num_packets = 0;
+            buf_list->mBuffers[0].mDataByteSize = 0;
+            return noErr;
+        }
+        UInt32 frames_to_give = static_cast<UInt32>(
+            std::min(static_cast<int64_t>(*num_packets), s->frames_remaining));
+        buf_list->mBuffers[0].mData = const_cast<float*>(s->data);
+        buf_list->mBuffers[0].mDataByteSize =
+            frames_to_give * static_cast<UInt32>(s->channels) * sizeof(float);
+        buf_list->mBuffers[0].mNumberChannels = static_cast<UInt32>(s->channels);
+        *num_packets = frames_to_give;
+        s->data += static_cast<size_t>(frames_to_give) * s->channels;
+        s->frames_remaining -= frames_to_give;
+        return noErr;
+    };
+
+    // Allocate output with some headroom for resampler ringing
+    int64_t alloc_frames = out_frames + 256;
+    size_t alloc_bytes = static_cast<size_t>(alloc_frames) * channels * sizeof(float);
+    float* out_buf = static_cast<float*>(aligned_alloc_64(alloc_bytes));
+
+    int64_t total_out = 0;
+    while (true) {
+        UInt32 out_packet_count = static_cast<UInt32>(alloc_frames - total_out);
+        if (out_packet_count == 0) break;
+
+        AudioBufferList abl;
+        abl.mNumberBuffers = 1;
+        abl.mBuffers[0].mNumberChannels = static_cast<UInt32>(channels);
+        abl.mBuffers[0].mDataByteSize =
+            out_packet_count * static_cast<UInt32>(channels) * sizeof(float);
+        abl.mBuffers[0].mData = out_buf + total_out * channels;
+
+        status = AudioConverterFillComplexBuffer(
+            converter, input_callback, &state,
+            &out_packet_count, &abl, nullptr);
+
+        total_out += out_packet_count;
+
+        if (status != noErr || out_packet_count == 0) break;
+    }
+
+    AudioConverterDispose(converter);
+
+    // Wrap in mlx array
+    mlx::core::Shape shape;
+    if (was_1d) {
+        shape = {static_cast<int32_t>(total_out)};
+    } else {
+        shape = {static_cast<int32_t>(total_out), static_cast<int32_t>(channels)};
+    }
+
+    return mlx::core::array(
+        static_cast<void*>(out_buf),
+        std::move(shape),
+        mlx::core::float32,
+        aligned_free);
+}
+
 }  // namespace mlx_audio

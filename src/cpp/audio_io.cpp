@@ -31,4 +31,12 @@ void save_audio(
     backend_save_audio(path, std::move(audio), sr, layout, encoding, bitrate, clip);
 }
 
+mlx::core::array resample_audio(
+    mlx::core::array audio,
+    int in_sr,
+    int out_sr,
+    const std::string& quality) {
+    return backend_resample_audio(std::move(audio), in_sr, out_sr, quality);
+}
+
 }  // namespace mlx_audio

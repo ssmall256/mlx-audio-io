@@ -1081,27 +1081,32 @@ int parse_resample_quality(const std::string& quality) {
 }
 
 std::pair<float*, int64_t> resample_linear_interleaved(
-    float* in,
+    const float* in,
     int64_t in_frames,
     int channels,
     int in_sr,
     int out_sr) {
+    int64_t out_frames;
     if (out_sr == in_sr || in_frames == 0) {
-        return {in, in_frames};
-    }
-
-    int64_t out_frames = static_cast<int64_t>(
-        std::llround(static_cast<long double>(in_frames) * out_sr / in_sr));
-    if (out_frames <= 0) {
-        out_frames = 0;
+        out_frames = in_frames;
+    } else {
+        out_frames = static_cast<int64_t>(
+            std::llround(static_cast<long double>(in_frames) * out_sr / in_sr));
+        if (out_frames <= 0) {
+            out_frames = 0;
+        }
     }
 
     size_t out_bytes = static_cast<size_t>(std::max<int64_t>(out_frames, 1)) *
                        channels * sizeof(float);
     float* out = static_cast<float*>(aligned_alloc_64(out_bytes));
 
+    if (out_sr == in_sr && in_frames > 0) {
+        std::memcpy(out, in, static_cast<size_t>(in_frames) * channels * sizeof(float));
+        return {out, in_frames};
+    }
+
     if (out_frames == 0) {
-        std::free(in);
         return {out, 0};
     }
 
@@ -1111,7 +1116,6 @@ std::pair<float*, int64_t> resample_linear_interleaved(
                 out[i * channels + c] = in[c];
             }
         }
-        std::free(in);
         return {out, out_frames};
     }
 
@@ -1135,7 +1139,6 @@ std::pair<float*, int64_t> resample_linear_interleaved(
         }
     }
 
-    std::free(in);
     return {out, out_frames};
 }
 
@@ -1252,6 +1255,7 @@ std::pair<mlx::core::array, int> load_wav(
     if (out_sr != wav.sample_rate) {
         auto resampled =
             resample_linear_interleaved(buffer, actual_frames, wav.channels, wav.sample_rate, out_sr);
+        std::free(buffer);
         buffer = resampled.first;
         actual_frames = resampled.second;
     }
@@ -1313,6 +1317,7 @@ std::pair<mlx::core::array, int> load_mp3(
     if (out_sr != native_sr) {
         auto resampled =
             resample_linear_interleaved(buffer, actual_frames, channels, native_sr, out_sr);
+        std::free(buffer);
         buffer = resampled.first;
         actual_frames = resampled.second;
     }
@@ -1750,6 +1755,70 @@ void backend_save_audio(
         transcode_codec,
         transcode_bitrate,
         libav_preferred_fmt);
+}
+
+// ---------------------------------------------------------------------------
+// resample_audio — in-memory sample rate conversion via linear interpolation
+// ---------------------------------------------------------------------------
+
+mlx::core::array backend_resample_audio(
+    mlx::core::array audio,
+    int in_sr,
+    int out_sr,
+    const std::string& quality) {
+
+    // --- Validate ---
+    if (in_sr <= 0) {
+        throw value_error("in_sr must be > 0, got " + std::to_string(in_sr));
+    }
+    if (out_sr <= 0) {
+        throw value_error("out_sr must be > 0, got " + std::to_string(out_sr));
+    }
+    if (audio.dtype() != mlx::core::float32 && audio.dtype() != mlx::core::float16) {
+        throw value_error("audio must be float32 or float16");
+    }
+    if (audio.ndim() != 1 && audio.ndim() != 2) {
+        throw value_error(
+            "audio must be 1D or 2D, got ndim=" + std::to_string(audio.ndim()));
+    }
+    // Validate quality string (not used on Linux but must be valid)
+    parse_resample_quality(quality);
+
+    // No-op
+    if (in_sr == out_sr) {
+        return audio;
+    }
+
+    // Upcast float16 → float32 and materialize
+    bool was_1d = (audio.ndim() == 1);
+    if (audio.dtype() == mlx::core::float16) {
+        audio = mlx::core::astype(audio, mlx::core::float32);
+    }
+    if (was_1d) {
+        audio = mlx::core::reshape(audio, {audio.shape(0), 1});
+    }
+    mlx::core::eval(audio);
+
+    int64_t in_frames = audio.shape(0);
+    int channels = audio.shape(1);
+    const float* in_data = audio.data<float>();
+
+    auto [out_buf, out_frames] = resample_linear_interleaved(
+        in_data, in_frames, channels, in_sr, out_sr);
+
+    // Wrap in mlx array
+    mlx::core::Shape shape;
+    if (was_1d) {
+        shape = {static_cast<int32_t>(out_frames)};
+    } else {
+        shape = {static_cast<int32_t>(out_frames), static_cast<int32_t>(channels)};
+    }
+
+    return mlx::core::array(
+        static_cast<void*>(out_buf),
+        std::move(shape),
+        mlx::core::float32,
+        internal::aligned_free);
 }
 
 }  // namespace mlx_audio
