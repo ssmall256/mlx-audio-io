@@ -592,6 +592,8 @@ AVCodecID codec_id_for_transcode_codec(const std::string& codec_name) {
     if (codec_name == "pcm_s16be") return AV_CODEC_ID_PCM_S16BE;
     if (codec_name == "pcm_f32le") return AV_CODEC_ID_PCM_F32LE;
     if (codec_name == "pcm_s16le") return AV_CODEC_ID_PCM_S16LE;
+    if (codec_name == "pcm_s24be") return AV_CODEC_ID_PCM_S24BE;
+    if (codec_name == "pcm_s24le") return AV_CODEC_ID_PCM_S24LE;
     return AV_CODEC_ID_NONE;
 }
 
