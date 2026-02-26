@@ -31,6 +31,30 @@ def _read_embedded_build_info() -> dict[str, Any]:
     return {k: _normalize_optional(v) for k, v in data.items()}
 
 
+def _extract_arch_from_platform_tag(platform_tag: str) -> str | None:
+    lower = platform_tag.lower()
+    known_arches = (
+        "x86_64",
+        "amd64",
+        "aarch64",
+        "arm64",
+        "ppc64le",
+        "s390x",
+        "riscv64",
+        "armv7l",
+        "armv6l",
+        "i686",
+        "x86",
+        "universal2",
+    )
+
+    for arch in known_arches:
+        if lower == arch or lower.endswith(f"_{arch}") or lower.endswith(f"-{arch}"):
+            return arch
+
+    return None
+
+
 def _parse_wheel_tag_fallback() -> dict[str, Any]:
     fallback: dict[str, Any] = {}
 
@@ -69,8 +93,10 @@ def _parse_wheel_tag_fallback() -> dict[str, Any]:
             fallback["build_os_name"] = "Linux"
         if "win" in lower:
             fallback["build_os_name"] = "Windows"
-        if "_" in platform_tag:
-            fallback["arch"] = platform_tag.rsplit("_", 1)[-1]
+
+        arch = _extract_arch_from_platform_tag(platform_tag)
+        if arch:
+            fallback["arch"] = arch
 
     return fallback
 
