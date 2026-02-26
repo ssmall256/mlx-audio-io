@@ -145,3 +145,34 @@ endif()
 
 # Install into the Python package directory
 install(TARGETS _core LIBRARY DESTINATION mlx_audio_io)
+
+set(MLX_AUDIO_IO_DEPLOYMENT_TARGET "")
+if(APPLE)
+    set(MLX_AUDIO_IO_DEPLOYMENT_TARGET "${CMAKE_OSX_DEPLOYMENT_TARGET}")
+endif()
+
+set(MLX_AUDIO_IO_WHEEL_VERSION "")
+if(DEFINED SKBUILD_PROJECT_VERSION AND NOT "${SKBUILD_PROJECT_VERSION}" STREQUAL "")
+    set(MLX_AUDIO_IO_WHEEL_VERSION "${SKBUILD_PROJECT_VERSION}")
+elseif(DEFINED PROJECT_VERSION AND NOT "${PROJECT_VERSION}" STREQUAL "")
+    set(MLX_AUDIO_IO_WHEEL_VERSION "${PROJECT_VERSION}")
+endif()
+
+if("${MLX_AUDIO_IO_WHEEL_VERSION}" STREQUAL "")
+    file(STRINGS "${CMAKE_SOURCE_DIR}/pyproject.toml" _pyproject_version_line REGEX "^version = \".*\"")
+    if(_pyproject_version_line)
+        list(GET _pyproject_version_line 0 _pyproject_version_first)
+        string(REGEX REPLACE "^version = \"([^\"]+)\".*" "\\1" MLX_AUDIO_IO_WHEEL_VERSION "${_pyproject_version_first}")
+    endif()
+endif()
+
+if("${MLX_AUDIO_IO_WHEEL_VERSION}" STREQUAL "")
+    set(MLX_AUDIO_IO_WHEEL_VERSION "unknown")
+endif()
+
+configure_file(
+    "${CMAKE_SOURCE_DIR}/python/mlx_audio_io/_build_info.json.in"
+    "${CMAKE_CURRENT_BINARY_DIR}/_build_info.json"
+    @ONLY
+)
+install(FILES "${CMAKE_CURRENT_BINARY_DIR}/_build_info.json" DESTINATION mlx_audio_io)

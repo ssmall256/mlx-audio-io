@@ -58,6 +58,17 @@ cd mlx-audio-io
 uv sync --extra dev
 ```
 
+### Hard Rule: Do Not Copy `.venv` Between Machines
+
+Do not copy project virtual environments across machines. Native extensions can fail
+integrity/code-sign checks or crash when moved between hosts.
+
+If you already copied one, recreate it:
+
+```bash
+rm -rf .venv && uv venv --python 3.11 && uv sync
+```
+
 ### Linux source build behavior
 
 Linux source builds require libav and use direct libav-backed paths:
@@ -88,6 +99,10 @@ Linux source builds require libav and use direct libav-backed paths:
   - For default Linux builds, ensure runtime libav libraries are present (`libavformat`, `libavcodec`, `libavutil`, `libswresample`).
 - MP3 test fixture generation failures
   - Tests that generate MP3 fixtures require `ffmpeg` or `lame` available on `PATH`.
+- Native import failures or unexpected crashes
+  - Run diagnostics: `python -m mlx_audio_io.doctor`
+  - Recreate env (do not copy `.venv` between machines):
+    `rm -rf .venv && uv venv --python 3.11 && uv sync`
 
 ## Quickstart
 
