@@ -1,5 +1,6 @@
 """Tests for mlx_audio_io.load()."""
 
+import math
 import os
 import tempfile
 
@@ -49,6 +50,35 @@ class TestLoadAiff:
         assert sr == 16000
         assert abs(audio.shape[0] - 8000) <= 2
         assert audio.shape[1] == 2
+
+    @pytest.mark.apple_only
+    def test_load_resample_offset_tracks_expected_window_center(self):
+        native_sr = 44100
+        target_sr = 16000
+        offset = 0.25
+        duration = 0.5
+        frames = native_sr
+
+        t = mx.arange(frames) / native_sr
+        ramp = mx.reshape((2.0 * t) - 1.0, [frames, 1]).astype(mx.float32)
+        mx.eval(ramp)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            path = f.name
+
+        try:
+            save(path, ramp, native_sr)
+            sliced, sr = load(path, sr=target_sr, offset=offset, duration=duration)
+            mx.eval(sliced)
+
+            assert sr == target_sr
+            assert abs(sliced.shape[0] - int(math.floor(duration * target_sr))) <= 2
+
+            observed_center = mx.mean(sliced[:, 0]).item()
+            expected_center = 2.0 * (offset + (duration / 2.0)) - 1.0
+            assert abs(observed_center - expected_center) < 0.08
+        finally:
+            os.unlink(path)
 
 
 class TestLoadExtendedOffsets:

@@ -772,22 +772,25 @@ AudioStreamReader::AudioStreamReader(
             "Failed to get frame count: OSStatus " + osstatus_to_string(status));
     }
 
-    int64_t total_frames_out;
-    if (out_sr_ == native_sr) {
-        total_frames_out = static_cast<int64_t>(native_frames);
-    } else {
-        total_frames_out = static_cast<int64_t>(
-            std::ceil(static_cast<double>(native_frames) * out_sr_ / native_sr));
-    }
-
-    int64_t start_frame = static_cast<int64_t>(std::floor(offset * out_sr_));
-    if (start_frame >= total_frames_out) {
+    // ExtAudioFileSeek uses source/native frame positions. Compute seek in native
+    // domain, then derive the emitted frame budget in output-SR domain.
+    int64_t start_frame_native = static_cast<int64_t>(std::floor(offset * native_sr));
+    if (start_frame_native >= static_cast<int64_t>(native_frames)) {
         eof_ = true;
         max_frames_to_emit_ = 0;
         return;
     }
 
-    max_frames_to_emit_ = total_frames_out - start_frame;
+    int64_t remaining_native = static_cast<int64_t>(native_frames) - start_frame_native;
+    int64_t remaining_out = 0;
+    if (out_sr_ == native_sr) {
+        remaining_out = remaining_native;
+    } else {
+        remaining_out = static_cast<int64_t>(
+            std::ceil(static_cast<double>(remaining_native) * out_sr_ / native_sr));
+    }
+
+    max_frames_to_emit_ = remaining_out;
     if (duration.has_value()) {
         int64_t duration_frames =
             static_cast<int64_t>(std::floor(duration.value() * out_sr_));
@@ -799,8 +802,8 @@ AudioStreamReader::AudioStreamReader(
         return;
     }
 
-    if (start_frame > 0) {
-        status = ExtAudioFileSeek(ext_file_.get(), start_frame);
+    if (start_frame_native > 0) {
+        status = ExtAudioFileSeek(ext_file_.get(), start_frame_native);
         if (status != noErr) {
             throw std::runtime_error(
                 "Failed to seek stream reader: OSStatus " + osstatus_to_string(status));

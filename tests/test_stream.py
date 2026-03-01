@@ -29,6 +29,19 @@ def _make_test_wav(sr=16000, duration=1.0, channels=1):
     return path
 
 
+def _make_ramp_wav(sr=44100, duration=1.0):
+    frames = int(sr * duration)
+    t = mx.arange(frames) / sr
+    audio = mx.reshape((2.0 * t) - 1.0, [frames, 1]).astype(mx.float32)
+    mx.eval(audio)
+
+    f = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+    path = f.name
+    f.close()
+    save(path, audio, sr)
+    return path
+
+
 class TestStreamConcatenated:
     def test_concatenated_matches_load(self):
         """Stream all chunks, concatenate, compare to load()."""
@@ -187,6 +200,35 @@ class TestStreamOffsetDuration:
                 mx.eval(chunk)
                 sizes.append(chunk.shape[0])
             assert sizes == [3200, 3200, 1600]
+        finally:
+            os.unlink(path)
+
+    @pytest.mark.apple_only
+    def test_stream_resample_offset_tracks_expected_window_center(self):
+        offset = 0.25
+        duration = 0.5
+        target_sr = 16000
+        path = _make_ramp_wav(sr=44100, duration=1.0)
+        try:
+            chunks = []
+            for chunk, sr in stream(
+                path,
+                chunk_frames=1500,
+                sr=target_sr,
+                offset=offset,
+                duration=duration,
+            ):
+                mx.eval(chunk)
+                assert sr == target_sr
+                chunks.append(chunk)
+
+            actual = mx.concatenate(chunks, axis=0)
+            mx.eval(actual)
+            assert abs(actual.shape[0] - int(math.floor(duration * target_sr))) <= 2
+
+            observed_center = mx.mean(actual[:, 0]).item()
+            expected_center = 2.0 * (offset + (duration / 2.0)) - 1.0
+            assert abs(observed_center - expected_center) < 0.08
         finally:
             os.unlink(path)
 

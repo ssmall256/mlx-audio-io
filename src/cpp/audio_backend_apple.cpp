@@ -761,22 +761,14 @@ std::pair<mlx::core::array, int> backend_load_audio(
             "Failed to get frame count: OSStatus " + osstatus_to_string(status));
     }
 
-    // Compute total frames at output SR
-    int64_t total_frames_out;
-    if (out_sr == native_sr) {
-        total_frames_out = static_cast<int64_t>(native_frames);
-    } else {
-        total_frames_out = static_cast<int64_t>(
-            std::ceil(static_cast<double>(native_frames) * out_sr / native_fmt.mSampleRate));
-    }
-
-    // --- Compute start_frame and frames_to_read ---
-    int64_t start_frame = static_cast<int64_t>(std::floor(offset * out_sr));
+    // ExtAudioFileSeek expects frame positions in the source/native domain.
+    // When resampling is active, computing seek offsets at out_sr causes drift.
+    int64_t start_frame_native = static_cast<int64_t>(std::floor(offset * native_sr));
     int64_t frames_to_read;
 
     auto target_dtype = (dtype == "float16") ? mlx::core::float16 : mlx::core::float32;
 
-    if (start_frame >= total_frames_out) {
+    if (start_frame_native >= static_cast<int64_t>(native_frames)) {
         // Offset beyond end: return empty tensor
         int out_channels = mono ? 1 : channels;
         mlx::core::Shape shape;
@@ -789,18 +781,25 @@ std::pair<mlx::core::array, int> backend_load_audio(
             std::initializer_list<int>{}, shape, target_dtype), out_sr};
     }
 
+    int64_t remaining_native = static_cast<int64_t>(native_frames) - start_frame_native;
+    int64_t remaining_out = 0;
+    if (out_sr == native_sr) {
+        remaining_out = remaining_native;
+    } else {
+        remaining_out = static_cast<int64_t>(
+            std::ceil(static_cast<double>(remaining_native) * out_sr / native_sr));
+    }
+
     if (duration.has_value()) {
         frames_to_read = static_cast<int64_t>(std::floor(duration.value() * out_sr));
-        if (start_frame + frames_to_read > total_frames_out) {
-            frames_to_read = total_frames_out - start_frame;
-        }
+        frames_to_read = std::min<int64_t>(frames_to_read, remaining_out);
     } else {
-        frames_to_read = total_frames_out - start_frame;
+        frames_to_read = remaining_out;
     }
 
     // --- Seek ---
-    if (start_frame > 0) {
-        status = ExtAudioFileSeek(ext_file.get(), start_frame);
+    if (start_frame_native > 0) {
+        status = ExtAudioFileSeek(ext_file.get(), start_frame_native);
         if (status != noErr) {
             throw std::runtime_error(
                 "Failed to seek: OSStatus " + osstatus_to_string(status));
