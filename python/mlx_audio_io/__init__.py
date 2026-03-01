@@ -146,20 +146,32 @@ def stream(
 ):
     if (chunk_frames is None) == (chunk_duration is None):
         raise ValueError("Exactly one of chunk_frames or chunk_duration must be specified.")
-
-    # Native stream path (no slicing window).
-    reader = _get_core_module().stream(
-        path,
-        chunk_frames=chunk_frames,
-        chunk_duration=chunk_duration,
-        sr=sr,
-        mono=mono,
-        dtype=dtype,
-    )
-
-    if float(offset) == 0.0 and duration is None:
-        return reader
-    return _WindowedStreamReader(reader, offset_s=offset, duration_s=duration)
+    core = _get_core_module()
+    try:
+        # Preferred path: native stream-level slicing support.
+        return core.stream(
+            path,
+            chunk_frames=chunk_frames,
+            chunk_duration=chunk_duration,
+            sr=sr,
+            mono=mono,
+            offset=offset,
+            duration=duration,
+            dtype=dtype,
+        )
+    except TypeError:
+        # Compatibility fallback for older native modules.
+        reader = core.stream(
+            path,
+            chunk_frames=chunk_frames,
+            chunk_duration=chunk_duration,
+            sr=sr,
+            mono=mono,
+            dtype=dtype,
+        )
+        if float(offset) == 0.0 and duration is None:
+            return reader
+        return _WindowedStreamReader(reader, offset_s=offset, duration_s=duration)
 
 
 def _maybe_convert_numpy(audio):

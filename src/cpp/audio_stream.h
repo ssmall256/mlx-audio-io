@@ -22,6 +22,8 @@ class AudioStreamReader {
   public:
     AudioStreamReader(const std::string& path, int chunk_frames,
                       std::optional<int> sr, bool mono,
+                      double offset,
+                      std::optional<double> duration,
                       const std::string& dtype);
     ~AudioStreamReader();
     AudioStreamReader(const AudioStreamReader&) = delete;
@@ -64,6 +66,7 @@ class AudioStreamReader {
     bool mono_;
     bool eof_ = false;
     int64_t frames_read_ = 0;
+    int64_t max_frames_to_emit_ = -1;
     bool is_mp3_ = false;
     std::optional<ScopedMp3Decoder> mp3_dec_;
     std::string dtype_;

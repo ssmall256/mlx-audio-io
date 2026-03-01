@@ -275,9 +275,49 @@ SwrContext* create_libav_stream_swr(
     return swr_raw;
 }
 
+void seek_libav_stream_state(
+    LibavStreamState* st,
+    double offset_seconds) {
+    if (!st || offset_seconds <= 0.0) return;
+    AVStream* stream = st->format_ctx->streams[st->stream_index];
+    int64_t target_us = static_cast<int64_t>(std::llround(offset_seconds * AV_TIME_BASE));
+    int64_t target_ts = av_rescale_q(
+        target_us,
+        AVRational{1, AV_TIME_BASE},
+        stream->time_base);
+    int rc = av_seek_frame(
+        st->format_ctx,
+        st->stream_index,
+        target_ts,
+        AVSEEK_FLAG_BACKWARD);
+    if (rc < 0) {
+        throw value_error(
+            "Failed to seek stream() on Linux backend via libav: " +
+            av_error_to_string(rc));
+    }
+
+    avformat_flush(st->format_ctx);
+    avcodec_flush_buffers(st->codec_ctx);
+    if (st->swr_ctx) {
+        swr_close(st->swr_ctx);
+        int init_rc = swr_init(st->swr_ctx);
+        if (init_rc < 0) {
+            throw value_error(
+                "Failed to reset stream() resampler on Linux backend via libav: " +
+                av_error_to_string(init_rc));
+        }
+    }
+
+    st->flush_sent = false;
+    st->decoder_eof = false;
+    st->pending_interleaved.clear();
+    st->pending_pos = 0;
+}
+
 LibavStreamState* create_libav_stream_state(
     const std::string& path,
-    std::optional<int> sr) {
+    std::optional<int> sr,
+    double offset_seconds) {
     auto* st = new LibavStreamState();
     try {
         int rc = avformat_open_input(&st->format_ctx, path.c_str(), nullptr, nullptr);
@@ -346,6 +386,7 @@ LibavStreamState* create_libav_stream_state(
         if (!st->packet || !st->frame) {
             throw std::runtime_error("Failed to allocate libav packet/frame for stream()");
         }
+        seek_libav_stream_state(st, offset_seconds);
     } catch (...) {
         delete st;
         throw;
@@ -551,6 +592,8 @@ AudioStreamReader::AudioStreamReader(
     int chunk_frames,
     std::optional<int> sr,
     bool mono,
+    double offset,
+    std::optional<double> duration,
     const std::string& dtype)
     : chunk_frames_(chunk_frames), mono_(mono), dtype_(dtype) {
     if (dtype != "float32" && dtype != "float16") {
@@ -561,6 +604,12 @@ AudioStreamReader::AudioStreamReader(
     }
     if (sr.has_value() && sr.value() <= 0) {
         throw value_error("sr must be > 0");
+    }
+    if (offset < 0.0) {
+        throw value_error("offset must be >= 0, got " + std::to_string(offset));
+    }
+    if (duration.has_value() && duration.value() <= 0.0) {
+        throw value_error("duration must be > 0, got " + std::to_string(duration.value()));
     }
 
     check_file_exists(path);
@@ -577,12 +626,18 @@ AudioStreamReader::AudioStreamReader(
                 ".wav, .mp3, .flac, .m4a, .aiff, .caf");
         }
 
-        auto* st = create_libav_stream_state(path, sr);
+        auto* st = create_libav_stream_state(path, sr, offset);
         libav_stream_ = st;
         is_libav_stream_ = true;
         out_sr_ = st->out_sr;
         native_channels_ = st->native_channels;
         out_channels_ = mono_ ? 1 : native_channels_;
+        if (duration.has_value()) {
+            max_frames_to_emit_ = static_cast<int64_t>(std::floor(duration.value() * out_sr_));
+            if (max_frames_to_emit_ <= 0) {
+                eof_ = true;
+            }
+        }
         return;
     }
 
@@ -607,8 +662,8 @@ AudioStreamReader::AudioStreamReader(
             auto predecoded = backend_load_audio(
                 path,
                 sr,
-                0.0,
-                std::nullopt,
+                offset,
+                duration,
                 mono_,
                 "channels_last",
                 "float32",
@@ -626,6 +681,7 @@ AudioStreamReader::AudioStreamReader(
             out_sr_ = predecoded.second;
             out_channels_ = static_cast<int>(predecoded_audio_->shape(1));
             native_channels_ = out_channels_;
+            max_frames_to_emit_ = predecoded_total_frames_;
             is_predecoded_ = true;
             eof_ = (predecoded_total_frames_ == 0);
             return;
@@ -644,6 +700,26 @@ AudioStreamReader::AudioStreamReader(
             native_channels_ = mp3_dec_->channels();
             out_sr_ = mp3_dec_->sample_rate();
             out_channels_ = mono_ ? 1 : native_channels_;
+            int64_t total_frames = mp3_dec_->total_frames();
+            int64_t start_frame = static_cast<int64_t>(std::floor(offset * out_sr_));
+            if (start_frame >= total_frames) {
+                eof_ = true;
+                max_frames_to_emit_ = 0;
+                return;
+            }
+            if (start_frame > 0) {
+                mp3_dec_->seek(start_frame * native_channels_);
+            }
+            max_frames_to_emit_ = total_frames - start_frame;
+            if (duration.has_value()) {
+                int64_t duration_frames =
+                    static_cast<int64_t>(std::floor(duration.value() * out_sr_));
+                max_frames_to_emit_ = std::min<int64_t>(
+                    max_frames_to_emit_, std::max<int64_t>(0, duration_frames));
+            }
+            if (max_frames_to_emit_ <= 0) {
+                eof_ = true;
+            }
             return;
         }
         // Needs resampling — discard the decoder and fall through
@@ -683,6 +759,53 @@ AudioStreamReader::AudioStreamReader(
         throw std::runtime_error(
             "Failed to set client format: OSStatus " + osstatus_to_string(status));
     }
+
+    SInt64 native_frames = 0;
+    prop_size = sizeof(native_frames);
+    status = ExtAudioFileGetProperty(
+        ext_file_.get(),
+        kExtAudioFileProperty_FileLengthFrames,
+        &prop_size,
+        &native_frames);
+    if (status != noErr) {
+        throw std::runtime_error(
+            "Failed to get frame count: OSStatus " + osstatus_to_string(status));
+    }
+
+    int64_t total_frames_out;
+    if (out_sr_ == native_sr) {
+        total_frames_out = static_cast<int64_t>(native_frames);
+    } else {
+        total_frames_out = static_cast<int64_t>(
+            std::ceil(static_cast<double>(native_frames) * out_sr_ / native_sr));
+    }
+
+    int64_t start_frame = static_cast<int64_t>(std::floor(offset * out_sr_));
+    if (start_frame >= total_frames_out) {
+        eof_ = true;
+        max_frames_to_emit_ = 0;
+        return;
+    }
+
+    max_frames_to_emit_ = total_frames_out - start_frame;
+    if (duration.has_value()) {
+        int64_t duration_frames =
+            static_cast<int64_t>(std::floor(duration.value() * out_sr_));
+        max_frames_to_emit_ = std::min<int64_t>(
+            max_frames_to_emit_, std::max<int64_t>(0, duration_frames));
+    }
+    if (max_frames_to_emit_ <= 0) {
+        eof_ = true;
+        return;
+    }
+
+    if (start_frame > 0) {
+        status = ExtAudioFileSeek(ext_file_.get(), start_frame);
+        if (status != noErr) {
+            throw std::runtime_error(
+                "Failed to seek stream reader: OSStatus " + osstatus_to_string(status));
+        }
+    }
 #else
     if (!is_wav_path(path)) {
         throw value_error(
@@ -698,12 +821,39 @@ AudioStreamReader::AudioStreamReader(
     if (!wav_file_) {
         throw std::runtime_error("Failed to open WAV file: " + path);
     }
-    fseek(wav_file_, static_cast<long>(wav.data_offset), SEEK_SET);
+    int64_t start_frame = static_cast<int64_t>(std::floor(offset * wav.sample_rate));
+    if (start_frame >= wav.total_frames) {
+        eof_ = true;
+        max_frames_to_emit_ = 0;
+        fseek(wav_file_, static_cast<long>(wav.data_offset + wav.data_bytes), SEEK_SET);
+    } else {
+        int64_t emit_frames = wav.total_frames - start_frame;
+        if (duration.has_value()) {
+            int64_t duration_frames =
+                static_cast<int64_t>(std::floor(duration.value() * wav.sample_rate));
+            emit_frames = std::min<int64_t>(
+                emit_frames, std::max<int64_t>(0, duration_frames));
+        }
+        wav_total_frames_ = emit_frames;
+        max_frames_to_emit_ = emit_frames;
+        int block_align = wav.channels * (wav.bits_per_sample / 8);
+        int64_t byte_offset = wav.data_offset + start_frame * block_align;
+        if (fseek(wav_file_, static_cast<long>(byte_offset), SEEK_SET) != 0) {
+            fclose(wav_file_);
+            wav_file_ = nullptr;
+            throw std::runtime_error("Failed to seek in WAV file: " + path);
+        }
+        if (emit_frames <= 0) {
+            eof_ = true;
+        }
+    }
 
     is_wav_ = true;
     wav_bits_per_sample_ = wav.bits_per_sample;
     wav_format_tag_ = wav.format_tag;
-    wav_total_frames_ = wav.total_frames;
+    if (max_frames_to_emit_ < 0) {
+        wav_total_frames_ = wav.total_frames;
+    }
 
     native_channels_ = wav.channels;
     out_sr_ = wav.sample_rate;
@@ -749,6 +899,7 @@ AudioStreamReader::AudioStreamReader(AudioStreamReader&& other) noexcept
       mono_(other.mono_),
       eof_(other.eof_),
       frames_read_(other.frames_read_),
+      max_frames_to_emit_(other.max_frames_to_emit_),
       is_mp3_(other.is_mp3_),
       mp3_dec_(std::move(other.mp3_dec_)),
       dtype_(std::move(other.dtype_)) {
@@ -772,6 +923,7 @@ AudioStreamReader::AudioStreamReader(AudioStreamReader&& other) noexcept
     other.mono_ = false;
     other.eof_ = true;
     other.frames_read_ = 0;
+    other.max_frames_to_emit_ = -1;
     other.is_mp3_ = false;
 }
 
@@ -811,6 +963,7 @@ AudioStreamReader& AudioStreamReader::operator=(AudioStreamReader&& other) noexc
     mono_ = other.mono_;
     eof_ = other.eof_;
     frames_read_ = other.frames_read_;
+    max_frames_to_emit_ = other.max_frames_to_emit_;
     is_mp3_ = other.is_mp3_;
     mp3_dec_ = std::move(other.mp3_dec_);
     dtype_ = std::move(other.dtype_);
@@ -835,6 +988,7 @@ AudioStreamReader& AudioStreamReader::operator=(AudioStreamReader&& other) noexc
     other.mono_ = false;
     other.eof_ = true;
     other.frames_read_ = 0;
+    other.max_frames_to_emit_ = -1;
     other.is_mp3_ = false;
 
     return *this;
@@ -845,6 +999,15 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
         return tensor_utils::make_empty_audio_result(
             out_sr_, out_channels_, false, "channels_last", dtype_);
     }
+    int64_t window_remaining = -1;
+    if (max_frames_to_emit_ >= 0) {
+        window_remaining = max_frames_to_emit_ - frames_read_;
+        if (window_remaining <= 0) {
+            eof_ = true;
+            return tensor_utils::make_empty_audio_result(
+                out_sr_, out_channels_, false, "channels_last", dtype_);
+        }
+    }
 
 #if !defined(__APPLE__)
     if (is_libav_stream_) {
@@ -852,15 +1015,19 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
             throw std::runtime_error("Invalid libav stream reader state on Linux backend");
         }
         auto* st = static_cast<LibavStreamState*>(libav_stream_);
+        int64_t chunk_limit = chunk_frames_;
+        if (window_remaining >= 0) {
+            chunk_limit = std::min<int64_t>(chunk_limit, window_remaining);
+        }
         size_t target_samples =
-            static_cast<size_t>(chunk_frames_) * static_cast<size_t>(st->native_channels);
+            static_cast<size_t>(chunk_limit) * static_cast<size_t>(st->native_channels);
 
         fill_libav_stream_pending(st, target_samples);
 
         size_t available_samples = st->pending_interleaved.size() - st->pending_pos;
         int64_t available_frames =
             static_cast<int64_t>(available_samples / static_cast<size_t>(st->native_channels));
-        int64_t frames_to_emit = std::min<int64_t>(chunk_frames_, available_frames);
+        int64_t frames_to_emit = std::min<int64_t>(chunk_limit, available_frames);
 
         if (frames_to_emit <= 0) {
             eof_ = true;
@@ -899,6 +1066,11 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
             is_libav_stream_ = false;
             delete st;
             libav_stream_ = nullptr;
+        } else if (max_frames_to_emit_ >= 0 && frames_read_ >= max_frames_to_emit_) {
+            eof_ = true;
+            is_libav_stream_ = false;
+            delete st;
+            libav_stream_ = nullptr;
         }
 
         return tensor_utils::wrap_interleaved_audio_buffer(
@@ -913,6 +1085,9 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
 
     if (is_predecoded_) {
         int64_t remaining = predecoded_total_frames_ - frames_read_;
+        if (window_remaining >= 0) {
+            remaining = std::min<int64_t>(remaining, window_remaining);
+        }
         if (remaining <= 0) {
             eof_ = true;
             return tensor_utils::make_empty_audio_result(
@@ -927,7 +1102,8 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
         std::memcpy(buffer, src, sample_count * sizeof(float));
 
         frames_read_ += frames_to_read;
-        if (frames_read_ >= predecoded_total_frames_) {
+        if (frames_read_ >= predecoded_total_frames_ ||
+            (max_frames_to_emit_ >= 0 && frames_read_ >= max_frames_to_emit_)) {
             eof_ = true;
         }
 
@@ -937,10 +1113,14 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
 #endif
 
     if (is_mp3_) {
-        size_t buffer_bytes = static_cast<size_t>(chunk_frames_) * native_channels_ * sizeof(float);
+        int64_t chunk_limit = chunk_frames_;
+        if (window_remaining >= 0) {
+            chunk_limit = std::min<int64_t>(chunk_limit, window_remaining);
+        }
+        size_t buffer_bytes = static_cast<size_t>(chunk_limit) * native_channels_ * sizeof(float);
         float* buffer = static_cast<float*>(aligned_alloc_64(buffer_bytes));
 
-        int64_t samples_wanted = static_cast<int64_t>(chunk_frames_) * native_channels_;
+        int64_t samples_wanted = chunk_limit * native_channels_;
         int64_t samples_read = mp3_dec_->read(buffer, samples_wanted);
         int64_t actual_frames = (native_channels_ > 0) ? samples_read / native_channels_ : 0;
 
@@ -952,16 +1132,23 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
         }
 
         frames_read_ += actual_frames;
+        if (max_frames_to_emit_ >= 0 && frames_read_ >= max_frames_to_emit_) {
+            eof_ = true;
+        }
 
         return tensor_utils::wrap_interleaved_audio_buffer(
             buffer, actual_frames, native_channels_, out_sr_, mono_, "channels_last", dtype_);
     }
 
 #if defined(__APPLE__)
-    size_t buffer_bytes = static_cast<size_t>(chunk_frames_) * native_channels_ * sizeof(float);
+    int64_t chunk_limit = chunk_frames_;
+    if (window_remaining >= 0) {
+        chunk_limit = std::min<int64_t>(chunk_limit, window_remaining);
+    }
+    size_t buffer_bytes = static_cast<size_t>(chunk_limit) * native_channels_ * sizeof(float);
     float* buffer = static_cast<float*>(aligned_alloc_64(buffer_bytes));
 
-    UInt32 frames_remaining = static_cast<UInt32>(chunk_frames_);
+    UInt32 frames_remaining = static_cast<UInt32>(chunk_limit);
     UInt32 total_read = 0;
     float* write_ptr = buffer;
 
@@ -993,6 +1180,9 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
 
     int64_t actual_frames = static_cast<int64_t>(total_read);
     frames_read_ += actual_frames;
+    if (max_frames_to_emit_ >= 0 && frames_read_ >= max_frames_to_emit_) {
+        eof_ = true;
+    }
 
     if (actual_frames == 0) {
         std::free(buffer);
@@ -1009,6 +1199,9 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
     }
 
     int64_t remaining = wav_total_frames_ - frames_read_;
+    if (window_remaining >= 0) {
+        remaining = std::min<int64_t>(remaining, window_remaining);
+    }
     if (remaining <= 0) {
         eof_ = true;
         return tensor_utils::make_empty_audio_result(
@@ -1033,7 +1226,8 @@ std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
     }
 
     frames_read_ += actual_frames;
-    if (frames_read_ >= wav_total_frames_) {
+    if (frames_read_ >= wav_total_frames_ ||
+        (max_frames_to_emit_ >= 0 && frames_read_ >= max_frames_to_emit_)) {
         eof_ = true;
     }
 

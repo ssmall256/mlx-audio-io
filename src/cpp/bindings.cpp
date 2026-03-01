@@ -189,6 +189,8 @@ Raises:
              std::optional<double> chunk_duration,
              std::optional<int> sr,
              bool mono,
+             double offset,
+             std::optional<double> duration,
              const std::string& dtype) -> mlx_audio::AudioStreamReader {
               // Validate: exactly one of chunk_frames / chunk_duration
               if (chunk_frames.has_value() == chunk_duration.has_value()) {
@@ -223,13 +225,16 @@ Raises:
                   }
               }
 
-              return mlx_audio::AudioStreamReader(path, frames, sr, mono, dtype);
+              return mlx_audio::AudioStreamReader(
+                  path, frames, sr, mono, offset, duration, dtype);
           },
           "path"_a,
           "chunk_frames"_a = nb::none(),
           "chunk_duration"_a = nb::none(),
           "sr"_a = nb::none(),
           "mono"_a = false,
+          "offset"_a = 0.0,
+          "duration"_a = nb::none(),
           "dtype"_a = "float32",
           R"(Create a streaming reader that yields audio chunks.
 
@@ -244,6 +249,8 @@ Args:
     chunk_duration: Duration of each chunk in seconds.
     sr: Target sample rate. None to use native rate.
     mono: If True, mix down to mono.
+    offset: Start time in seconds (default 0.0).
+    duration: Duration in seconds. None to read to end.
     dtype: Output dtype — 'float32' (default) or 'float16'.
 
 Returns:
