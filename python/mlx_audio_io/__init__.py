@@ -6,6 +6,7 @@ import math
 from typing import Any
 
 import mlx.core as mx
+import numpy as np
 
 from ._native_loader import get_diagnostic_info, load_native_module
 
@@ -89,7 +90,37 @@ def info(path):
     return _get_core_module().info(path)
 
 
+def _resample_torchaudio_compat(audio: mx.array, in_sr: int, out_sr: int) -> mx.array:
+    try:
+        import torch
+        import torchaudio
+    except Exception as exc:  # pragma: no cover - optional dependency
+        raise RuntimeError(
+            "quality='torchaudio_compat' requires torch and torchaudio to be installed"
+        ) from exc
+
+    x = mx.array(audio).astype(mx.float32)
+    if x.ndim == 1:
+        samples = np.asarray(x, dtype=np.float32)
+        tx = torch.from_numpy(samples)[None, :]
+        with torch.no_grad():
+            ty = torchaudio.functional.resample(tx, int(in_sr), int(out_sr))
+        return mx.array(ty[0].cpu().numpy().astype(np.float32), dtype=mx.float32)
+    if x.ndim == 2:
+        frames_channels = np.asarray(x, dtype=np.float32)
+        tx = torch.from_numpy(frames_channels.T).contiguous()
+        with torch.no_grad():
+            ty = torchaudio.functional.resample(tx, int(in_sr), int(out_sr))
+        return mx.array(ty.T.cpu().numpy().astype(np.float32), dtype=mx.float32)
+    raise ValueError(
+        "audio must be 1D [frames] or 2D [frames, channels] for torchaudio_compat "
+        f"resampling, got shape={tuple(x.shape)}"
+    )
+
+
 def resample(audio, in_sr, out_sr, quality="default"):
+    if str(quality).strip().lower() == "torchaudio_compat":
+        return _resample_torchaudio_compat(audio, int(in_sr), int(out_sr))
     return _get_core_module().resample(audio, in_sr, out_sr, quality=quality)
 
 

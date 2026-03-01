@@ -6,6 +6,16 @@ import pytest
 
 import mlx_audio_io as mac
 
+try:
+    import torch
+    import torchaudio
+except Exception:  # pragma: no cover - optional dependency
+    torch = None
+    torchaudio = None
+
+
+_HAS_TORCHAUDIO = torch is not None and torchaudio is not None
+
 
 def _make_sine(sr, duration=0.1, channels=1, freq=440.0):
     """Create a sine wave mlx array (frames, channels)."""
@@ -76,6 +86,35 @@ class TestQuality:
         audio = _make_sine(44100)
         with pytest.raises(ValueError):
             mac.resample(audio, 44100, 16000, quality="ultra")
+
+
+@pytest.mark.skipif(not _HAS_TORCHAUDIO, reason="torch/torchaudio not installed")
+class TestTorchAudioCompat:
+    def test_quality_mode_is_accepted(self):
+        audio = _make_sine(44100, channels=2)
+        result = mac.resample(audio, 44100, 16000, quality="torchaudio_compat")
+        assert result.ndim == 2
+        assert result.shape[1] == 2
+
+    def test_matches_direct_torchaudio_stereo(self):
+        audio = _make_sine(44100, duration=0.4, channels=2, freq=523.25)
+        got = np.asarray(mac.resample(audio, 44100, 16000, quality="torchaudio_compat"))
+
+        ref_in = torch.from_numpy(np.asarray(audio, dtype=np.float32).T).contiguous()
+        with torch.no_grad():
+            ref = torchaudio.functional.resample(ref_in, 44100, 16000).T.cpu().numpy().astype(np.float32)
+
+        np.testing.assert_allclose(got, ref, rtol=0.0, atol=1e-6)
+
+    def test_matches_direct_torchaudio_1d(self):
+        mono = mx.array(np.sin(np.linspace(0, 1, 4410, dtype=np.float32)))
+        got = np.asarray(mac.resample(mono, 44100, 16000, quality="torchaudio_compat"))
+
+        ref_in = torch.from_numpy(np.asarray(mono, dtype=np.float32))[None, :]
+        with torch.no_grad():
+            ref = torchaudio.functional.resample(ref_in, 44100, 16000)[0].cpu().numpy().astype(np.float32)
+
+        np.testing.assert_allclose(got, ref, rtol=0.0, atol=1e-6)
 
 
 class TestValidation:
