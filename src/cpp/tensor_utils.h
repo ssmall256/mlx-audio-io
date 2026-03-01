@@ -67,11 +67,10 @@ inline std::pair<mlx::core::array, int> wrap_interleaved_audio_buffer(
         shape = {static_cast<int32_t>(actual_frames), static_cast<int32_t>(out_channels)};
     }
 
-    auto arr = mlx::core::array(
-        static_cast<void*>(buffer),
-        std::move(shape),
-        mlx::core::float32,
-        internal::aligned_free);
+    // Copy into MLX-owned storage, then release native buffer immediately.
+    // This avoids cross-runtime lifetime issues when returning many chunks.
+    auto arr = mlx::core::array(buffer, std::move(shape), mlx::core::float32);
+    std::free(buffer);
 
     if (dtype == "float16") {
         arr = mlx::core::astype(arr, mlx::core::float16);

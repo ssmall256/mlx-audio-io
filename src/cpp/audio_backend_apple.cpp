@@ -285,11 +285,9 @@ std::pair<mlx::core::array, int> wrap_audio_buffer(
                  static_cast<int32_t>(out_channels)};
     }
 
-    auto arr = mlx::core::array(
-        static_cast<void*>(buffer),
-        std::move(shape),
-        mlx::core::float32,
-        aligned_free);
+    // Copy into MLX-owned storage, then release native buffer immediately.
+    auto arr = mlx::core::array(buffer, std::move(shape), mlx::core::float32);
+    std::free(buffer);
 
     if (dtype == "float16") {
         arr = mlx::core::astype(arr, mlx::core::float16);
@@ -441,28 +439,19 @@ std::pair<mlx::core::array, int> load_wav_fast(
         size_t got = fread(buffer, 1, static_cast<size_t>(read_bytes), f.get());
         actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(float));
     } else if (wav.format_tag == 1 && wav.bits_per_sample == 16) {
-        // PCM16 — read into the tail of the float buffer, convert in-place.
-        // float32 is 4 bytes per sample, int16 is 2 bytes, so the int16 data
-        // fits in the upper half of the buffer. We convert back-to-front to
-        // avoid overwriting unprocessed samples.
+        // PCM16 -> float32 must use non-overlapping source/destination buffers.
+        // vDSP conversion with overlapping regions can corrupt memory.
         size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
-        // Place int16 data at the end of the float buffer
-        int16_t* pcm_region = reinterpret_cast<int16_t*>(
-            reinterpret_cast<char*>(buffer) + sample_count * sizeof(float)
-            - sample_count * sizeof(int16_t));
-        size_t got = fread(pcm_region, 1, static_cast<size_t>(read_bytes), f.get());
+        int16_t* pcm_buf = static_cast<int16_t*>(aligned_alloc_64(
+            sample_count * sizeof(int16_t)));
+        size_t got = fread(pcm_buf, 1, static_cast<size_t>(read_bytes), f.get());
         actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(int16_t));
         size_t actual_samples = static_cast<size_t>(actual_frames) * wav.channels;
 
-        // Convert int16 -> float32 (safe: src and dst don't overlap destructively
-        // because we placed int16 data at the tail and float32 writes start at
-        // the head, consuming 4 bytes per sample vs 2 bytes read)
-        vDSP_vflt16(pcm_region, 1, buffer, 1,
-                     static_cast<vDSP_Length>(actual_samples));
-        // Scale to [-1, 1]
+        vDSP_vflt16(pcm_buf, 1, buffer, 1, static_cast<vDSP_Length>(actual_samples));
         float scale = 1.0f / 32768.0f;
-        vDSP_vsmul(buffer, 1, &scale, buffer, 1,
-                    static_cast<vDSP_Length>(actual_samples));
+        vDSP_vsmul(buffer, 1, &scale, buffer, 1, static_cast<vDSP_Length>(actual_samples));
+        std::free(pcm_buf);
     } else if (wav.format_tag == 1 && wav.bits_per_sample == 24) {
         // PCM24 — read raw bytes, unpack, convert (NEON-accelerated)
         size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
@@ -503,18 +492,18 @@ std::pair<mlx::core::array, int> load_wav_fast(
         }
         std::free(raw);
     } else if (wav.format_tag == 1 && wav.bits_per_sample == 32) {
-        // PCM32 — read directly into buffer (int32 and float32 are same size),
-        // then convert in-place.
-        size_t got = fread(buffer, 1, static_cast<size_t>(read_bytes), f.get());
+        // PCM32 -> float32 also uses a separate source buffer for safety.
+        size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
+        int32_t* pcm_buf = static_cast<int32_t*>(aligned_alloc_64(
+            sample_count * sizeof(int32_t)));
+        size_t got = fread(pcm_buf, 1, static_cast<size_t>(read_bytes), f.get());
         actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(int32_t));
         size_t actual_samples = static_cast<size_t>(actual_frames) * wav.channels;
 
-        // Reinterpret the buffer as int32 for vDSP conversion
-        vDSP_vflt32(reinterpret_cast<int32_t*>(buffer), 1, buffer, 1,
-                     static_cast<vDSP_Length>(actual_samples));
+        vDSP_vflt32(pcm_buf, 1, buffer, 1, static_cast<vDSP_Length>(actual_samples));
         float scale = 1.0f / 2147483648.0f;  // 2^31
-        vDSP_vsmul(buffer, 1, &scale, buffer, 1,
-                    static_cast<vDSP_Length>(actual_samples));
+        vDSP_vsmul(buffer, 1, &scale, buffer, 1, static_cast<vDSP_Length>(actual_samples));
+        std::free(pcm_buf);
     } else {
         // Unsupported bit depth — should not happen (parse_wav_header validated)
         std::free(buffer);

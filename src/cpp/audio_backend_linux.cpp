@@ -1194,22 +1194,20 @@ std::pair<mlx::core::array, int> load_wav(
         size_t got = fread(buffer, 1, static_cast<size_t>(read_bytes), f.get());
         actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(float));
     } else if (wav.format_tag == 1 && wav.bits_per_sample == 16) {
-        // Read int16 data into the tail of the float buffer, convert forward.
-        // float32 is 4 bytes, int16 is 2 bytes, so int16 data fits in the
-        // upper half of the buffer without overlap issues.
+        // Use a non-overlapping source buffer for conversion.
         size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
-        int16_t* pcm_region = reinterpret_cast<int16_t*>(
-            reinterpret_cast<char*>(buffer) + sample_count * sizeof(float)
-            - sample_count * sizeof(int16_t));
+        int16_t* pcm_buf = static_cast<int16_t*>(
+            aligned_alloc_64(sample_count * sizeof(int16_t)));
 
-        size_t got = fread(pcm_region, 1, static_cast<size_t>(read_bytes), f.get());
+        size_t got = fread(pcm_buf, 1, static_cast<size_t>(read_bytes), f.get());
         actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(int16_t));
         size_t actual_samples = static_cast<size_t>(actual_frames) * wav.channels;
 
         constexpr float kScale = 1.0f / 32768.0f;
         for (size_t i = 0; i < actual_samples; ++i) {
-            buffer[i] = static_cast<float>(pcm_region[i]) * kScale;
+            buffer[i] = static_cast<float>(pcm_buf[i]) * kScale;
         }
+        std::free(pcm_buf);
     } else if (wav.format_tag == 1 && wav.bits_per_sample == 24) {
         size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
         size_t raw_bytes = sample_count * 3;
@@ -1230,16 +1228,18 @@ std::pair<mlx::core::array, int> load_wav(
 
         std::free(raw);
     } else if (wav.format_tag == 1 && wav.bits_per_sample == 32) {
-        // Read int32 directly into the float buffer (same width), convert in-place.
-        size_t got = fread(buffer, 1, static_cast<size_t>(read_bytes), f.get());
+        size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
+        int32_t* pcm_buf = static_cast<int32_t*>(
+            aligned_alloc_64(sample_count * sizeof(int32_t)));
+        size_t got = fread(pcm_buf, 1, static_cast<size_t>(read_bytes), f.get());
         actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(int32_t));
         size_t actual_samples = static_cast<size_t>(actual_frames) * wav.channels;
 
-        int32_t* pcm_buf = reinterpret_cast<int32_t*>(buffer);
         constexpr float kScale = 1.0f / 2147483648.0f;
         for (size_t i = 0; i < actual_samples; ++i) {
             buffer[i] = static_cast<float>(pcm_buf[i]) * kScale;
         }
+        std::free(pcm_buf);
     } else {
         std::free(buffer);
         throw value_error(
