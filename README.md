@@ -101,6 +101,11 @@ Linux source builds require libav and use direct libav-backed paths:
   - Tests that generate MP3 fixtures require `ffmpeg` or `lame` available on `PATH`.
 - Native import failures or unexpected crashes
   - Run diagnostics: `python -m mlx_audio_io.doctor`
+  - Check MLX runtime compatibility:
+    `python -c "import mlx_audio_io as aio; print(aio.show_build_info())"`
+  - If `build_mlx_version` and `runtime_mlx_version` differ, reinstall with matching deps:
+    `pip install -U "mlx==<build_mlx_version>" "mlx-audio-io"`
+  - Avoid `pip install --no-deps` for `mlx-audio-io` unless you manually pin a matching `mlx` version.
   - Recreate env (do not copy `.venv` between machines):
     `rm -rf .venv && uv venv --python 3.11 && uv sync`
 

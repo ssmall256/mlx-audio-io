@@ -188,3 +188,92 @@ def test_deployment_target_mismatch_raises_runtime_error(monkeypatch, tmp_path):
                 "python_tag": "cp312",
             },
         )
+
+
+def test_mlx_version_mismatch_raises_runtime_error(monkeypatch, tmp_path):
+    native_path = tmp_path / "_core.cpython-312-darwin.so"
+    native_path.write_bytes(b"native-bytes")
+
+    monkeypatch.setattr(
+        native_loader,
+        "_runtime_context",
+        lambda _p: {
+            "os_name": "Darwin",
+            "os_version": "14.2",
+            "arch": "arm64",
+            "python_tag": "cp312",
+            "extension_python_tag": "cp312",
+            "macos_version": "14.2",
+        },
+    )
+    monkeypatch.setattr(native_loader, "_runtime_mlx_version", lambda: "0.30.1")
+
+    with pytest.raises(RuntimeError, match="MLX version mismatch"):
+        native_loader.verify_compatibility(
+            native_path,
+            build_info={
+                "build_os_name": "Darwin",
+                "arch": "arm64",
+                "python_tag": "cp312",
+                "build_mlx_version": "0.30.6",
+            },
+        )
+
+
+def test_missing_runtime_mlx_raises_runtime_error(monkeypatch, tmp_path):
+    native_path = tmp_path / "_core.cpython-312-darwin.so"
+    native_path.write_bytes(b"native-bytes")
+
+    monkeypatch.setattr(
+        native_loader,
+        "_runtime_context",
+        lambda _p: {
+            "os_name": "Darwin",
+            "os_version": "14.2",
+            "arch": "arm64",
+            "python_tag": "cp312",
+            "extension_python_tag": "cp312",
+            "macos_version": "14.2",
+        },
+    )
+    monkeypatch.setattr(native_loader, "_runtime_mlx_version", lambda: None)
+
+    with pytest.raises(RuntimeError, match="MLX runtime not found"):
+        native_loader.verify_compatibility(
+            native_path,
+            build_info={
+                "build_os_name": "Darwin",
+                "arch": "arm64",
+                "python_tag": "cp312",
+                "build_mlx_version": "0.30.6",
+            },
+        )
+
+
+def test_matching_mlx_version_passes(monkeypatch, tmp_path):
+    native_path = tmp_path / "_core.cpython-312-darwin.so"
+    native_path.write_bytes(b"native-bytes")
+
+    monkeypatch.setattr(
+        native_loader,
+        "_runtime_context",
+        lambda _p: {
+            "os_name": "Darwin",
+            "os_version": "14.2",
+            "arch": "arm64",
+            "python_tag": "cp312",
+            "extension_python_tag": "cp312",
+            "macos_version": "14.2",
+        },
+    )
+    monkeypatch.setattr(native_loader, "_runtime_mlx_version", lambda: "0.30.6")
+
+    native_loader.verify_compatibility(
+        native_path,
+        build_info={
+            "build_os_name": "Darwin",
+            "arch": "arm64",
+            "python_tag": "cp312",
+            "build_mlx_version": "0.30.6",
+        },
+    )

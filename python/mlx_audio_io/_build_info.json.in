@@ -2,6 +2,7 @@
   "build_os_name": "@CMAKE_SYSTEM_NAME@",
   "build_os_version": "@CMAKE_SYSTEM_VERSION@",
   "deployment_target": "@MLX_AUDIO_IO_DEPLOYMENT_TARGET@",
+  "build_mlx_version": "@MLX_AUDIO_IO_BUILD_MLX_VERSION@",
   "arch": "@CMAKE_SYSTEM_PROCESSOR@",
   "python_tag": "cp@Python_VERSION_MAJOR@@Python_VERSION_MINOR@",
   "wheel_version": "@MLX_AUDIO_IO_WHEEL_VERSION@"

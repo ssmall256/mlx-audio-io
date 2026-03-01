@@ -82,10 +82,13 @@ def _print_summary() -> None:
         "build_deployment_target",
         "build_arch",
         "build_python_tag",
+        "build_mlx_version",
         "runtime_os_name",
         "runtime_os_version",
         "runtime_arch",
         "runtime_python_tag",
+        "runtime_mlx_version",
+        "mlx_version_matches",
     ):
         print(f"{key}: {info.get(key)}")
 

@@ -75,6 +75,19 @@ def _parse_version_tuple(value: str | None) -> tuple[int, ...] | None:
     return tuple(parts) if parts else None
 
 
+def _normalize_optional(value: Any) -> Any:
+    if value in ("", "null", "None"):
+        return None
+    return value
+
+
+def _runtime_mlx_version() -> str | None:
+    try:
+        return importlib_metadata.version("mlx")
+    except importlib_metadata.PackageNotFoundError:
+        return None
+
+
 def _runtime_context(native_path: Path) -> dict[str, Any]:
     os_name = platform.system()
     mac_version = platform.mac_ver()[0] if os_name == "Darwin" else None
@@ -254,6 +267,23 @@ def verify_compatibility(native_path: Path, build_info: dict[str, Any] | None = 
                 f"{_REMEDIATION}"
             )
 
+    build_mlx_version = _normalize_optional(build.get("build_mlx_version"))
+    if build_mlx_version and str(build_mlx_version).lower() != "unknown":
+        runtime_mlx_version = _runtime_mlx_version()
+        if runtime_mlx_version is None:
+            raise RuntimeError(
+                "MLX runtime not found: mlx-audio-io native binary requires "
+                f"mlx=={build_mlx_version}, but `mlx` is not installed.\n"
+                "Install a matching MLX runtime before using mlx-audio-io."
+            )
+        if runtime_mlx_version != str(build_mlx_version):
+            raise RuntimeError(
+                "MLX version mismatch: mlx-audio-io native binary was built against "
+                f"mlx=={build_mlx_version}, but runtime has mlx=={runtime_mlx_version}.\n"
+                "This can trigger native crashes in load/save paths.\n"
+                f"Fix: pip install -U \"mlx=={build_mlx_version}\" \"mlx-audio-io\""
+            )
+
 
 def run_preflight_checks(native_path: Path | None = None) -> Path:
     path = resolve_native_path() if native_path is None else native_path
@@ -318,6 +348,8 @@ def get_diagnostic_info() -> dict[str, Any]:
 
     build_arch = info.get("arch")
     build_python_tag = info.get("python_tag")
+    build_mlx_version = _normalize_optional(info.get("build_mlx_version"))
+    runtime_mlx_version = _runtime_mlx_version()
 
     return {
         "package_version": info.get("wheel_version"),
@@ -328,11 +360,13 @@ def get_diagnostic_info() -> dict[str, Any]:
         "build_deployment_target": info.get("deployment_target"),
         "build_arch": build_arch,
         "build_python_tag": build_python_tag,
+        "build_mlx_version": build_mlx_version,
         "build_wheel_version": info.get("wheel_version"),
         "runtime_os_name": runtime_os,
         "runtime_os_version": runtime_os_version,
         "runtime_arch": runtime_arch,
         "runtime_python_tag": runtime_tag,
+        "runtime_mlx_version": runtime_mlx_version,
         "native_extension_python_tag": ext_tag,
         "arch_matches": (
             _canonical_arch(build_arch) == _canonical_arch(runtime_arch)
@@ -341,5 +375,10 @@ def get_diagnostic_info() -> dict[str, Any]:
         ),
         "python_tag_matches": (
             build_python_tag == runtime_tag if build_python_tag and runtime_tag else None
+        ),
+        "mlx_version_matches": (
+            (runtime_mlx_version == build_mlx_version)
+            if build_mlx_version and runtime_mlx_version
+            else None
         ),
     }

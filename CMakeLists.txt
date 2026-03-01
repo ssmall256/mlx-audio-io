@@ -170,6 +170,17 @@ if("${MLX_AUDIO_IO_WHEEL_VERSION}" STREQUAL "")
     set(MLX_AUDIO_IO_WHEEL_VERSION "unknown")
 endif()
 
+set(MLX_AUDIO_IO_BUILD_MLX_VERSION "")
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c "import importlib.metadata as m; print(m.version('mlx'))"
+    OUTPUT_VARIABLE MLX_AUDIO_IO_BUILD_MLX_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+if("${MLX_AUDIO_IO_BUILD_MLX_VERSION}" STREQUAL "")
+    set(MLX_AUDIO_IO_BUILD_MLX_VERSION "unknown")
+endif()
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/python/mlx_audio_io/_build_info.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/_build_info.json"
