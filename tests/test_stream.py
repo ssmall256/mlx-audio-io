@@ -158,6 +158,39 @@ class TestStreamOptions:
             os.unlink(flac_path)
 
 
+class TestStreamOffsetDuration:
+    def test_stream_window_matches_load(self):
+        path = _make_test_wav(sr=16000, duration=1.0)
+        try:
+            expected, expected_sr = load(path, offset=0.25, duration=0.5)
+            mx.eval(expected)
+
+            chunks = []
+            for chunk, sr in stream(path, chunk_frames=3000, offset=0.25, duration=0.5):
+                mx.eval(chunk)
+                assert sr == expected_sr
+                chunks.append(chunk)
+
+            concatenated = mx.concatenate(chunks, axis=0)
+            mx.eval(concatenated)
+            assert concatenated.shape == expected.shape
+            max_diff = mx.max(mx.abs(concatenated - expected)).item()
+            assert max_diff < 1e-5
+        finally:
+            os.unlink(path)
+
+    def test_chunk_duration_with_window(self):
+        path = _make_test_wav(sr=16000, duration=1.0)
+        try:
+            sizes = []
+            for chunk, sr in stream(path, chunk_duration=0.2, offset=0.2, duration=0.5):
+                mx.eval(chunk)
+                sizes.append(chunk.shape[0])
+            assert sizes == [3200, 3200, 1600]
+        finally:
+            os.unlink(path)
+
+
 class TestStreamErrors:
     def test_both_args_raises(self):
         path = _make_test_wav(sr=16000, duration=0.5)

@@ -199,7 +199,7 @@ Write audio from `mx.array` (or `numpy.ndarray`) to disk.
 
 ```python
 stream(path, chunk_frames=None, chunk_duration=None, sr=None,
-       mono=False, dtype="float32")
+       mono=False, dtype="float32", offset=0.0, duration=None)
 ```
 
 Return an iterator yielding `(audio_chunk, sample_rate)`. Exactly one of `chunk_frames` or `chunk_duration` is required.
@@ -212,6 +212,8 @@ Return an iterator yielding `(audio_chunk, sample_rate)`. Exactly one of `chunk_
 | `sr` | `None` | Target sample rate; `None` keeps native rate |
 | `mono` | `False` | Mix down to mono |
 | `dtype` | `"float32"` | `"float32"` or `"float16"` |
+| `offset` | `0.0` | Start position in seconds for windowed stream |
+| `duration` | `None` | Duration in seconds for windowed stream; `None` streams to end |
 
 ### `info`
 
