@@ -170,6 +170,31 @@ class TestStreamOptions:
             os.unlink(wav_path)
             os.unlink(flac_path)
 
+    def test_stream_equal_power_mono_mode(self):
+        path = _make_test_wav(sr=44100, duration=0.5, channels=2)
+        try:
+            expected, expected_sr = load(
+                path, mono=True, mono_mode="equal_power", layout="channels_last"
+            )
+            mx.eval(expected)
+
+            chunks = []
+            for chunk, sr in stream(
+                path, chunk_frames=4000, mono=True, mono_mode="equal_power"
+            ):
+                mx.eval(chunk)
+                assert sr == expected_sr
+                assert chunk.shape[1] == 1
+                chunks.append(chunk)
+
+            actual = mx.concatenate(chunks, axis=0)
+            mx.eval(actual)
+            assert actual.shape == expected.shape
+            max_diff = mx.max(mx.abs(actual - expected)).item()
+            assert max_diff < 1e-5
+        finally:
+            os.unlink(path)
+
 
 class TestStreamOffsetDuration:
     def test_stream_window_matches_load(self):
@@ -253,6 +278,14 @@ class TestStreamErrors:
     def test_file_not_found(self):
         with pytest.raises(FileNotFoundError):
             stream("/nonexistent/file.wav", chunk_frames=1000)
+
+    def test_invalid_mono_mode_raises(self):
+        path = _make_test_wav(sr=16000, duration=0.5)
+        try:
+            with pytest.raises(ValueError, match="mono_mode"):
+                stream(path, chunk_frames=1000, mono=True, mono_mode="invalid")
+        finally:
+            os.unlink(path)
 
 
 class TestStreamProperties:

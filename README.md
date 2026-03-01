@@ -149,7 +149,7 @@ save("out.m4a", x, sr, encoding="alac")
 ### `load`
 
 ```python
-load(path, sr=None, offset=0.0, duration=None, mono=False,
+load(path, sr=None, offset=0.0, duration=None, mono=False, mono_mode="mean",
      layout="channels_last", dtype="float32", resample_quality="default")
 ```
 
@@ -162,6 +162,7 @@ Decode audio into an `mlx.core.array`. Returns `(audio, sample_rate)`.
 | `offset` | `0.0` | Start position in seconds |
 | `duration` | `None` | Duration in seconds; `None` reads to end |
 | `mono` | `False` | Mix down to mono |
+| `mono_mode` | `"mean"` | Mono fold policy: `"mean"` or `"equal_power"` |
 | `layout` | `"channels_last"` | `"channels_last"` `[frames, ch]` or `"channels_first"` `[ch, frames]` |
 | `dtype` | `"float32"` | `"float32"` or `"float16"` |
 | `resample_quality` | `"default"` | `"default"`, `"fastest"`, `"low"`, `"medium"`, `"high"`, `"best"` |
@@ -171,7 +172,7 @@ Decode audio into an `mlx.core.array`. Returns `(audio, sample_rate)`.
 ### `batch_load`
 
 ```python
-batch_load(paths, sr=None, mono=False, dtype="float32", num_workers=4)
+batch_load(paths, sr=None, mono=False, mono_mode="mean", dtype="float32", num_workers=4)
 ```
 
 Threaded multi-file `load()`. Returns `list[(audio, sample_rate)]`.
@@ -199,7 +200,7 @@ Write audio from `mx.array` (or `numpy.ndarray`) to disk.
 
 ```python
 stream(path, chunk_frames=None, chunk_duration=None, sr=None,
-       mono=False, dtype="float32", offset=0.0, duration=None)
+       mono=False, mono_mode="mean", dtype="float32", offset=0.0, duration=None)
 ```
 
 Return an iterator yielding `(audio_chunk, sample_rate)`. Exactly one of `chunk_frames` or `chunk_duration` is required.
@@ -211,6 +212,7 @@ Return an iterator yielding `(audio_chunk, sample_rate)`. Exactly one of `chunk_
 | `chunk_duration` | `None` | Chunk size in seconds |
 | `sr` | `None` | Target sample rate; `None` keeps native rate |
 | `mono` | `False` | Mix down to mono |
+| `mono_mode` | `"mean"` | Mono fold policy: `"mean"` or `"equal_power"` |
 | `dtype` | `"float32"` | `"float32"` or `"float16"` |
 | `offset` | `0.0` | Start position in seconds for windowed stream |
 | `duration` | `None` | Duration in seconds for windowed stream; `None` streams to end |

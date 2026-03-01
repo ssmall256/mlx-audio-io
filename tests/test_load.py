@@ -144,6 +144,29 @@ class TestLoadMono:
         max_diff = mx.max(mx.abs(mono[:, 0] - left)).item()
         assert max_diff < 1e-4
 
+    def test_mono_mode_equal_power_scales_stereo_mix(self, pcm16_stereo_44k1):
+        stereo, _ = load(pcm16_stereo_44k1)
+        mono_mean, _ = load(pcm16_stereo_44k1, mono=True, mono_mode="mean")
+        mono_equal_power, _ = load(
+            pcm16_stereo_44k1, mono=True, mono_mode="equal_power"
+        )
+        mx.eval(stereo, mono_mean, mono_equal_power)
+
+        left = stereo[:, 0]
+        expected_equal_power = left * math.sqrt(2.0)
+        mx.eval(expected_equal_power)
+
+        diff_mean = mx.max(mx.abs(mono_mean[:, 0] - left)).item()
+        diff_equal_power = mx.max(
+            mx.abs(mono_equal_power[:, 0] - expected_equal_power)
+        ).item()
+        assert diff_mean < 1e-4
+        assert diff_equal_power < 2e-3
+
+    def test_invalid_mono_mode_raises(self, pcm16_mono_16k):
+        with pytest.raises(ValueError, match="mono_mode"):
+            load(pcm16_mono_16k, mono=True, mono_mode="invalid")
+
 
 class TestLoadOffsetDuration:
     def test_offset_zero(self, pcm16_mono_16k):
