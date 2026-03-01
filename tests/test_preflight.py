@@ -215,7 +215,7 @@ def test_mlx_version_mismatch_raises_runtime_error(monkeypatch, tmp_path):
                 "build_os_name": "Darwin",
                 "arch": "arm64",
                 "python_tag": "cp312",
-                "build_mlx_version": "0.30.6",
+                "build_mlx_version": "0.31.0",
             },
         )
 
@@ -245,7 +245,7 @@ def test_missing_runtime_mlx_raises_runtime_error(monkeypatch, tmp_path):
                 "build_os_name": "Darwin",
                 "arch": "arm64",
                 "python_tag": "cp312",
-                "build_mlx_version": "0.30.6",
+                "build_mlx_version": "0.31.0",
             },
         )
 
@@ -266,7 +266,7 @@ def test_matching_mlx_version_passes(monkeypatch, tmp_path):
             "macos_version": "14.2",
         },
     )
-    monkeypatch.setattr(native_loader, "_runtime_mlx_version", lambda: "0.30.6")
+    monkeypatch.setattr(native_loader, "_runtime_mlx_version", lambda: "0.31.0")
 
     native_loader.verify_compatibility(
         native_path,
@@ -274,6 +274,6 @@ def test_matching_mlx_version_passes(monkeypatch, tmp_path):
             "build_os_name": "Darwin",
             "arch": "arm64",
             "python_tag": "cp312",
-            "build_mlx_version": "0.30.6",
+            "build_mlx_version": "0.31.0",
         },
     )
