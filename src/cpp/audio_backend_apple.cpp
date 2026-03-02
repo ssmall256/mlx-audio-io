@@ -8,6 +8,11 @@
 #include <Accelerate/Accelerate.h>
 #include <AudioToolbox/AudioToolbox.h>
 
+#if MLX_AUDIO_IO_ENABLE_SOXR
+#include <soxr.h>
+#endif
+
+#include <algorithm>
 #include <arm_neon.h>
 #include <cmath>
 #include <cstdlib>
@@ -36,6 +41,124 @@ using internal::kReadChunkFrames;
 // ---------------------------------------------------------------------------
 
 namespace {
+
+bool is_soxr_quality(const std::string& quality) {
+    return quality == "soxr_hq" || quality == "soxr_vhq";
+}
+
+#if MLX_AUDIO_IO_ENABLE_SOXR
+mlx::core::array resample_with_soxr(
+    mlx::core::array audio,
+    int in_sr,
+    int out_sr,
+    const std::string& quality) {
+    bool was_1d = (audio.ndim() == 1);
+    if (audio.dtype() == mlx::core::float16) {
+        audio = mlx::core::astype(audio, mlx::core::float32);
+    }
+    if (was_1d) {
+        audio = mlx::core::reshape(audio, {audio.shape(0), 1});
+    }
+    mlx::core::eval(audio);
+
+    const int64_t in_frames = audio.shape(0);
+    const int channels = audio.shape(1);
+    const float* in_data = audio.data<float>();
+
+    int64_t expected_out_frames = static_cast<int64_t>(
+        std::llround(static_cast<long double>(in_frames) * out_sr / in_sr));
+    if (expected_out_frames < 0) {
+        expected_out_frames = 0;
+    }
+    const int64_t out_capacity = expected_out_frames + 256;
+    const size_t out_bytes =
+        static_cast<size_t>(std::max<int64_t>(out_capacity, 1)) *
+        static_cast<size_t>(channels) * sizeof(float);
+    float* out_buf = static_cast<float*>(aligned_alloc_64(out_bytes));
+
+    if (in_frames == 0 || expected_out_frames == 0) {
+        mlx::core::Shape shape;
+        if (was_1d) {
+            shape = {0};
+        } else {
+            shape = {0, static_cast<int32_t>(channels)};
+        }
+        return mlx::core::array(
+            static_cast<void*>(out_buf),
+            std::move(shape),
+            mlx::core::float32,
+            aligned_free);
+    }
+
+    const soxr_quality_spec_t q_spec =
+        (quality == "soxr_vhq")
+            ? soxr_quality_spec(SOXR_VHQ, 0)
+            : soxr_quality_spec(SOXR_HQ, 0);
+    const soxr_io_spec_t io_spec = soxr_io_spec(SOXR_FLOAT32_I, SOXR_FLOAT32_I);
+    const soxr_runtime_spec_t runtime_spec = soxr_runtime_spec(1);
+
+    soxr_error_t err = nullptr;
+    soxr_t soxr = soxr_create(
+        static_cast<double>(in_sr),
+        static_cast<double>(out_sr),
+        static_cast<unsigned>(channels),
+        &err,
+        &io_spec,
+        &q_spec,
+        &runtime_spec);
+    if (err != nullptr || soxr == nullptr) {
+        aligned_free(out_buf);
+        throw std::runtime_error(
+            "Failed to create libsoxr resampler: " +
+            std::string(err ? err : "unknown"));
+    }
+
+    size_t out_done = 0;
+    err = soxr_process(
+        soxr,
+        in_data,
+        static_cast<size_t>(in_frames),
+        nullptr,
+        out_buf,
+        static_cast<size_t>(out_capacity),
+        &out_done);
+    if (err != nullptr) {
+        soxr_delete(soxr);
+        aligned_free(out_buf);
+        throw std::runtime_error(
+            "libsoxr process failed: " + std::string(err));
+    }
+
+    size_t out_tail = 0;
+    err = soxr_process(
+        soxr,
+        nullptr,
+        0,
+        nullptr,
+        out_buf + out_done * channels,
+        static_cast<size_t>(out_capacity - static_cast<int64_t>(out_done)),
+        &out_tail);
+    soxr_delete(soxr);
+    if (err != nullptr) {
+        aligned_free(out_buf);
+        throw std::runtime_error(
+            "libsoxr finalization failed: " + std::string(err));
+    }
+
+    const int64_t total_out = static_cast<int64_t>(out_done + out_tail);
+    mlx::core::Shape shape;
+    if (was_1d) {
+        shape = {static_cast<int32_t>(total_out)};
+    } else {
+        shape = {static_cast<int32_t>(total_out), static_cast<int32_t>(channels)};
+    }
+    return mlx::core::array(
+        static_cast<void*>(out_buf),
+        std::move(shape),
+        mlx::core::float32,
+        aligned_free);
+}
+#endif
 
 /// Map an AudioFileTypeID to a container string.
 std::string file_type_to_container(UInt32 file_type) {
@@ -1266,6 +1389,18 @@ mlx::core::array backend_resample_audio(
     if (audio.ndim() != 1 && audio.ndim() != 2) {
         throw value_error(
             "audio must be 1D or 2D, got ndim=" + std::to_string(audio.ndim()));
+    }
+    if (is_soxr_quality(quality)) {
+#if MLX_AUDIO_IO_ENABLE_SOXR
+        if (in_sr == out_sr) {
+            return audio;
+        }
+        return resample_with_soxr(std::move(audio), in_sr, out_sr, quality);
+#else
+        throw value_error(
+            "quality '" + quality +
+            "' requested but this build does not include libsoxr support");
+#endif
     }
     int quality_val = parse_resample_quality(quality);
 

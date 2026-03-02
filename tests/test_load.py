@@ -6,9 +6,10 @@ import tempfile
 
 import mlx.core as mx
 import pytest
-from mlx_audio_io import batch_load, load, save
+from mlx_audio_io import batch_load, load, save, supports_soxr
 
 pytestmark = pytest.mark.linux_mvp
+_HAS_SOXR_NATIVE = supports_soxr()
 
 
 class TestLoadBasic:
@@ -277,10 +278,19 @@ class TestLoadResampleQuality:
             load(pcm16_mono_16k, resample_quality="invalid")
 
     def test_all_levels(self, pcm16_stereo_44k1):
-        for level in ("default", "fastest", "low", "medium", "high", "best", "soxr_hq"):
+        for level in ("default", "fastest", "low", "medium", "high", "best"):
             audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality=level)
             assert sr == 16000
             assert audio.shape[0] > 0
+
+    def test_soxr_quality_mode(self, pcm16_stereo_44k1):
+        if _HAS_SOXR_NATIVE:
+            audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality="soxr_hq")
+            assert sr == 16000
+            assert audio.shape[0] > 0
+        else:
+            with pytest.raises(RuntimeError, match="without libsoxr support"):
+                load(pcm16_stereo_44k1, sr=16000, resample_quality="soxr_hq")
 
 
 class TestLoadErrors:

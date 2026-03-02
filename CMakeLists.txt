@@ -28,6 +28,19 @@ if(UNIX AND NOT APPLE)
     list(APPEND LINUX_LIBAV_LINK_TARGETS PkgConfig::LIBAV)
 endif()
 
+option(MLX_AUDIO_IO_ENABLE_SOXR "Enable libsoxr-backed resampling modes" ON)
+set(MLX_AUDIO_IO_HAS_SOXR OFF)
+if(MLX_AUDIO_IO_ENABLE_SOXR)
+    find_path(SOXR_INCLUDE_DIR soxr.h)
+    find_library(SOXR_LIBRARY NAMES soxr libsoxr)
+    if(SOXR_INCLUDE_DIR AND SOXR_LIBRARY)
+        set(MLX_AUDIO_IO_HAS_SOXR ON)
+        message(STATUS "Found libsoxr: ${SOXR_LIBRARY}")
+    else()
+        message(STATUS "libsoxr not found; soxr_* resample quality modes disabled")
+    endif()
+endif()
+
 # Find Python and nanobind
 find_package(Python REQUIRED COMPONENTS Interpreter Development.Module)
 execute_process(
@@ -141,6 +154,11 @@ endif()
 if(UNIX AND NOT APPLE)
     target_compile_definitions(_core PRIVATE MLX_AUDIO_IO_ENABLE_LIBAV=1)
     target_link_libraries(_core PRIVATE ${LINUX_LIBAV_LINK_TARGETS})
+endif()
+if(MLX_AUDIO_IO_HAS_SOXR)
+    target_compile_definitions(_core PRIVATE MLX_AUDIO_IO_ENABLE_SOXR=1)
+    target_include_directories(_core PRIVATE ${SOXR_INCLUDE_DIR})
+    target_link_libraries(_core PRIVATE ${SOXR_LIBRARY})
 endif()
 
 # Install into the Python package directory

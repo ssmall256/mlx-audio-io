@@ -20,13 +20,15 @@ _RESAMPLE_QUALITY_NATIVE_VALUES = {
     "medium",
     "high",
     "best",
+    "soxr_hq",
+    "soxr_vhq",
 }
 _RESAMPLE_QUALITY_ALIASES = {
-    "soxr_hq": "high",
-    "soxr_style": "high",
-    "soxr_compat": "high",
+    "soxr_style": "soxr_hq",
+    "soxr_compat": "soxr_hq",
 }
 _RESAMPLE_QUALITY_TORCHAUDIO = "torchaudio_compat"
+_RESAMPLE_QUALITY_SOXR_VALUES = {"soxr_hq", "soxr_vhq"}
 
 
 def _get_core_module() -> Any:
@@ -50,6 +52,10 @@ def _normalize_resample_quality(quality: str) -> str:
         return q
     allowed = sorted(_RESAMPLE_QUALITY_NATIVE_VALUES | {_RESAMPLE_QUALITY_TORCHAUDIO} | set(_RESAMPLE_QUALITY_ALIASES.keys()))
     raise ValueError(f"Invalid resample quality {quality!r}. Must be one of {allowed}.")
+
+
+def supports_soxr() -> bool:
+    return bool(getattr(_get_core_module(), "_HAS_SOXR", False))
 
 
 def _mixdown_channels_last(audio: mx.array, mono_mode: str) -> mx.array:
@@ -92,23 +98,40 @@ def load(
     mono_mode = _normalize_mono_mode(mono_mode)
     resample_quality_norm = _normalize_resample_quality(resample_quality)
     request_stereo_for_fold = bool(mono) and mono_mode == _MONO_MODE_EQUAL_POWER
+    use_soxr_resample = (
+        resample_quality_norm in _RESAMPLE_QUALITY_SOXR_VALUES and sr is not None
+    )
     use_torchaudio_resample = (
         resample_quality_norm == _RESAMPLE_QUALITY_TORCHAUDIO and sr is not None
+    )
+    if use_soxr_resample and not supports_soxr():
+        raise RuntimeError(
+            f"quality={resample_quality_norm!r} requested but mlx-audio-io was built "
+            "without libsoxr support"
+        )
+    deferred_resample = use_torchaudio_resample or use_soxr_resample
+    native_load_quality = (
+        "default"
+        if deferred_resample or resample_quality_norm in _RESAMPLE_QUALITY_SOXR_VALUES
+        else resample_quality_norm
     )
 
     audio, out_sr = _get_core_module().load(
         path,
-        sr=(None if use_torchaudio_resample else sr),
+        sr=(None if deferred_resample else sr),
         offset=offset,
         duration=duration,
         mono=(False if request_stereo_for_fold else mono),
         layout=layout,
         dtype=dtype,
-        resample_quality=("default" if use_torchaudio_resample else resample_quality_norm),
+        resample_quality=native_load_quality,
     )
 
     if use_torchaudio_resample and int(out_sr) != int(sr):
         audio = _resample_torchaudio_compat(audio, int(out_sr), int(sr))
+        out_sr = int(sr)
+    elif use_soxr_resample and int(out_sr) != int(sr):
+        audio = resample(audio, int(out_sr), int(sr), quality=resample_quality_norm)
         out_sr = int(sr)
 
     if request_stereo_for_fold:
@@ -153,6 +176,11 @@ def _resample_torchaudio_compat(audio: mx.array, in_sr: int, out_sr: int) -> mx.
 
 def resample(audio, in_sr, out_sr, quality="default"):
     quality_norm = _normalize_resample_quality(quality)
+    if quality_norm in _RESAMPLE_QUALITY_SOXR_VALUES and not supports_soxr():
+        raise RuntimeError(
+            f"quality={quality_norm!r} requested but mlx-audio-io was built "
+            "without libsoxr support"
+        )
     if quality_norm == _RESAMPLE_QUALITY_TORCHAUDIO:
         return _resample_torchaudio_compat(audio, int(in_sr), int(out_sr))
     return _get_core_module().resample(audio, in_sr, out_sr, quality=quality_norm)
@@ -415,6 +443,7 @@ __all__ = [
     "stream",
     "batch_load",
     "show_build_info",
+    "supports_soxr",
     "AudioInfo",
     "AudioStreamReader",
 ]

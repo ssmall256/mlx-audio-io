@@ -165,10 +165,10 @@ Decode audio into an `mlx.core.array`. Returns `(audio, sample_rate)`.
 | `mono_mode` | `"mean"` | Mono fold policy: `"mean"` or `"equal_power"` |
 | `layout` | `"channels_last"` | `"channels_last"` `[frames, ch]` or `"channels_first"` `[ch, frames]` |
 | `dtype` | `"float32"` | `"float32"` or `"float16"` |
-| `resample_quality` | `"default"` | `"default"`, `"fastest"`, `"low"`, `"medium"`, `"high"`, `"best"`, `"soxr_hq"`, `"torchaudio_compat"` |
+| `resample_quality` | `"default"` | `"default"`, `"fastest"`, `"low"`, `"medium"`, `"high"`, `"best"`, `"soxr_hq"`, `"soxr_vhq"`, `"torchaudio_compat"` |
 
 > On Linux WAV/MP3 fast paths, resample quality levels currently map to the same linear behavior.
-> `soxr_hq` is a convenience alias that maps to native `"high"` quality.
+> `soxr_hq`/`soxr_vhq` use true libsoxr resampling (when built with libsoxr).
 > `torchaudio_compat` requires `torch` + `torchaudio` and uses `torchaudio.functional.resample`.
 
 ### `batch_load`

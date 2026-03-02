@@ -15,6 +15,7 @@ except Exception:  # pragma: no cover - optional dependency
 
 
 _HAS_TORCHAUDIO = torch is not None and torchaudio is not None
+_HAS_SOXR_NATIVE = mac.supports_soxr()
 
 
 def _make_sine(sr, duration=0.1, channels=1, freq=440.0):
@@ -78,18 +79,31 @@ class TestShape:
 class TestQuality:
     @pytest.mark.parametrize(
         "q",
-        ["default", "fastest", "low", "medium", "high", "best", "soxr_hq"],
+        ["default", "fastest", "low", "medium", "high", "best"],
     )
     def test_quality_levels(self, q):
         audio = _make_sine(44100)
         result = mac.resample(audio, 44100, 16000, quality=q)
         assert result.shape[0] > 0
 
-    def test_soxr_alias_matches_high(self):
+    def test_soxr_alias_matches_primary_mode(self):
+        if not _HAS_SOXR_NATIVE:
+            pytest.skip("libsoxr support not built")
         audio = _make_sine(44100, duration=0.25, channels=2)
-        high = np.asarray(mac.resample(audio, 44100, 16000, quality="high"))
-        soxr_hq = np.asarray(mac.resample(audio, 44100, 16000, quality="soxr_hq"))
-        np.testing.assert_allclose(soxr_hq, high, rtol=0.0, atol=1e-6)
+        alias = np.asarray(mac.resample(audio, 44100, 16000, quality="soxr_style"))
+        direct = np.asarray(mac.resample(audio, 44100, 16000, quality="soxr_hq"))
+        np.testing.assert_allclose(alias, direct, rtol=0.0, atol=1e-6)
+
+    def test_soxr_mode_runtime_behavior(self):
+        audio = _make_sine(44100, duration=0.25, channels=2)
+        if _HAS_SOXR_NATIVE:
+            soxr_hq = mac.resample(audio, 44100, 16000, quality="soxr_hq")
+            soxr_vhq = mac.resample(audio, 44100, 16000, quality="soxr_vhq")
+            assert soxr_hq.shape[0] > 0
+            assert soxr_vhq.shape[0] > 0
+        else:
+            with pytest.raises(RuntimeError, match="without libsoxr support"):
+                mac.resample(audio, 44100, 16000, quality="soxr_hq")
 
     def test_invalid_quality_raises(self):
         audio = _make_sine(44100)

@@ -14,6 +14,7 @@
 #include <cstring>
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 #include <vector>
 
@@ -24,6 +25,9 @@ extern "C" {
 #include <libavutil/error.h>
 #include <libavutil/samplefmt.h>
 #include <libswresample/swresample.h>
+#if MLX_AUDIO_IO_ENABLE_SOXR
+#include <soxr.h>
+#endif
 }
 
 // WAV fast path assumes little-endian layout.
@@ -1069,6 +1073,10 @@ bool is_mp3_path_ci(const std::string& path) {
     return is_mp3_path(path);
 }
 
+bool is_soxr_quality(const std::string& quality) {
+    return quality == "soxr_hq" || quality == "soxr_vhq";
+}
+
 int parse_resample_quality(const std::string& quality) {
     if (quality == "default") return -1;
     if (quality == "fastest") return 0;
@@ -1143,6 +1151,86 @@ std::pair<float*, int64_t> resample_linear_interleaved(
 
     return {out, out_frames};
 }
+
+#if MLX_AUDIO_IO_ENABLE_SOXR
+std::pair<float*, int64_t> resample_soxr_interleaved(
+    const float* in,
+    int64_t in_frames,
+    int channels,
+    int in_sr,
+    int out_sr,
+    const std::string& quality) {
+    int64_t expected_out_frames = static_cast<int64_t>(
+        std::llround(static_cast<long double>(in_frames) * out_sr / in_sr));
+    if (expected_out_frames < 0) {
+        expected_out_frames = 0;
+    }
+    const int64_t out_capacity = expected_out_frames + 256;
+    const size_t out_bytes =
+        static_cast<size_t>(std::max<int64_t>(out_capacity, 1)) *
+        static_cast<size_t>(channels) * sizeof(float);
+    float* out = static_cast<float*>(aligned_alloc_64(out_bytes));
+
+    if (in_frames == 0 || expected_out_frames == 0) {
+        return {out, 0};
+    }
+
+    const soxr_quality_spec_t q_spec =
+        (quality == "soxr_vhq")
+            ? soxr_quality_spec(SOXR_VHQ, 0)
+            : soxr_quality_spec(SOXR_HQ, 0);
+    const soxr_io_spec_t io_spec = soxr_io_spec(SOXR_FLOAT32_I, SOXR_FLOAT32_I);
+    const soxr_runtime_spec_t runtime_spec = soxr_runtime_spec(1);
+
+    soxr_error_t err = nullptr;
+    soxr_t soxr = soxr_create(
+        static_cast<double>(in_sr),
+        static_cast<double>(out_sr),
+        static_cast<unsigned>(channels),
+        &err,
+        &io_spec,
+        &q_spec,
+        &runtime_spec);
+    if (err != nullptr || soxr == nullptr) {
+        internal::aligned_free(out);
+        throw value_error(
+            "Failed to create libsoxr resampler: " +
+            std::string(err ? err : "unknown"));
+    }
+
+    size_t out_done = 0;
+    err = soxr_process(
+        soxr,
+        in,
+        static_cast<size_t>(in_frames),
+        nullptr,
+        out,
+        static_cast<size_t>(out_capacity),
+        &out_done);
+    if (err != nullptr) {
+        soxr_delete(soxr);
+        internal::aligned_free(out);
+        throw value_error("libsoxr process failed: " + std::string(err));
+    }
+
+    size_t out_tail = 0;
+    err = soxr_process(
+        soxr,
+        nullptr,
+        0,
+        nullptr,
+        out + out_done * channels,
+        static_cast<size_t>(out_capacity - static_cast<int64_t>(out_done)),
+        &out_tail);
+    soxr_delete(soxr);
+    if (err != nullptr) {
+        internal::aligned_free(out);
+        throw value_error("libsoxr finalization failed: " + std::string(err));
+    }
+
+    return {out, static_cast<int64_t>(out_done + out_tail)};
+}
+#endif
 
 std::pair<mlx::core::array, int> load_wav(
     const WavInfo& wav,
@@ -1814,8 +1902,11 @@ mlx::core::array backend_resample_audio(
         throw value_error(
             "audio must be 1D or 2D, got ndim=" + std::to_string(audio.ndim()));
     }
-    // Validate quality string (not used on Linux but must be valid)
-    parse_resample_quality(quality);
+    const bool use_soxr = is_soxr_quality(quality);
+    if (!use_soxr) {
+        // Validate non-soxr quality string
+        parse_resample_quality(quality);
+    }
 
     // No-op
     if (in_sr == out_sr) {
@@ -1836,8 +1927,21 @@ mlx::core::array backend_resample_audio(
     int channels = audio.shape(1);
     const float* in_data = audio.data<float>();
 
-    auto [out_buf, out_frames] = resample_linear_interleaved(
-        in_data, in_frames, channels, in_sr, out_sr);
+    float* out_buf = nullptr;
+    int64_t out_frames = 0;
+    if (use_soxr) {
+#if MLX_AUDIO_IO_ENABLE_SOXR
+        std::tie(out_buf, out_frames) = resample_soxr_interleaved(
+            in_data, in_frames, channels, in_sr, out_sr, quality);
+#else
+        throw value_error(
+            "quality '" + quality +
+            "' requested but this build does not include libsoxr support");
+#endif
+    } else {
+        std::tie(out_buf, out_frames) = resample_linear_interleaved(
+            in_data, in_frames, channels, in_sr, out_sr);
+    }
 
     // Wrap in mlx array
     mlx::core::Shape shape;

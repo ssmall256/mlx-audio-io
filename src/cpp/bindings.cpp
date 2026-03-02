@@ -11,6 +11,11 @@ using namespace nb::literals;
 
 NB_MODULE(_core, m) {
     m.doc() = "mlx-audio-io: Native audio I/O for MLX on macOS and Linux";
+#if MLX_AUDIO_IO_ENABLE_SOXR
+    m.attr("_HAS_SOXR") = true;
+#else
+    m.attr("_HAS_SOXR") = false;
+#endif
 
     // Register custom exceptions
     nb::register_exception_translator([](const std::exception_ptr& p, void*) {
@@ -112,6 +117,7 @@ Args:
     dtype: Output dtype — 'float32' (default) or 'float16'.
     resample_quality: Resampler quality when sr differs from native rate.
         'default', 'fastest', 'low', 'medium', 'high', or 'best'.
+        Python wrapper also supports 'soxr_hq' and 'soxr_vhq'.
         Ignored when no resampling occurs.
 
 Returns:
@@ -171,8 +177,9 @@ Args:
     in_sr: Source sample rate (must be > 0).
     out_sr: Target sample rate (must be > 0).
     quality: Resampler quality — 'default', 'fastest', 'low', 'medium', 'high', or 'best'.
+        Also supports 'soxr_hq' and 'soxr_vhq' when built with libsoxr.
         On macOS, maps to AudioConverter quality levels.
-        On Linux, quality is accepted but resampling uses linear interpolation.
+        On Linux, default quality modes use linear interpolation.
 
 Returns:
     Resampled mlx array with same ndim and channel count.
