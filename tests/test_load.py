@@ -277,7 +277,7 @@ class TestLoadResampleQuality:
             load(pcm16_mono_16k, resample_quality="invalid")
 
     def test_all_levels(self, pcm16_stereo_44k1):
-        for level in ("default", "fastest", "low", "medium", "high", "best"):
+        for level in ("default", "fastest", "low", "medium", "high", "best", "soxr_hq"):
             audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality=level)
             assert sr == 16000
             assert audio.shape[0] > 0

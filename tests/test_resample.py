@@ -76,11 +76,20 @@ class TestShape:
 
 
 class TestQuality:
-    @pytest.mark.parametrize("q", ["default", "fastest", "low", "medium", "high", "best"])
+    @pytest.mark.parametrize(
+        "q",
+        ["default", "fastest", "low", "medium", "high", "best", "soxr_hq"],
+    )
     def test_quality_levels(self, q):
         audio = _make_sine(44100)
         result = mac.resample(audio, 44100, 16000, quality=q)
         assert result.shape[0] > 0
+
+    def test_soxr_alias_matches_high(self):
+        audio = _make_sine(44100, duration=0.25, channels=2)
+        high = np.asarray(mac.resample(audio, 44100, 16000, quality="high"))
+        soxr_hq = np.asarray(mac.resample(audio, 44100, 16000, quality="soxr_hq"))
+        np.testing.assert_allclose(soxr_hq, high, rtol=0.0, atol=1e-6)
 
     def test_invalid_quality_raises(self):
         audio = _make_sine(44100)

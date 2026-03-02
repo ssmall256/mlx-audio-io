@@ -13,6 +13,20 @@ from ._native_loader import get_diagnostic_info, load_native_module
 _MONO_MODE_MEAN = "mean"
 _MONO_MODE_EQUAL_POWER = "equal_power"
 _MONO_MODE_VALUES = {_MONO_MODE_MEAN, _MONO_MODE_EQUAL_POWER}
+_RESAMPLE_QUALITY_NATIVE_VALUES = {
+    "default",
+    "fastest",
+    "low",
+    "medium",
+    "high",
+    "best",
+}
+_RESAMPLE_QUALITY_ALIASES = {
+    "soxr_hq": "high",
+    "soxr_style": "high",
+    "soxr_compat": "high",
+}
+_RESAMPLE_QUALITY_TORCHAUDIO = "torchaudio_compat"
 
 
 def _get_core_module() -> Any:
@@ -27,6 +41,15 @@ def _normalize_mono_mode(mono_mode: str) -> str:
             f"{sorted(_MONO_MODE_VALUES)}, got {mono_mode!r}"
         )
     return mode
+
+
+def _normalize_resample_quality(quality: str) -> str:
+    q = str(quality).strip().lower()
+    q = _RESAMPLE_QUALITY_ALIASES.get(q, q)
+    if q in _RESAMPLE_QUALITY_NATIVE_VALUES or q == _RESAMPLE_QUALITY_TORCHAUDIO:
+        return q
+    allowed = sorted(_RESAMPLE_QUALITY_NATIVE_VALUES | {_RESAMPLE_QUALITY_TORCHAUDIO} | set(_RESAMPLE_QUALITY_ALIASES.keys()))
+    raise ValueError(f"Invalid resample quality {quality!r}. Must be one of {allowed}.")
 
 
 def _mixdown_channels_last(audio: mx.array, mono_mode: str) -> mx.array:
@@ -67,17 +90,27 @@ def load(
     resample_quality="default",
 ):
     mono_mode = _normalize_mono_mode(mono_mode)
+    resample_quality_norm = _normalize_resample_quality(resample_quality)
     request_stereo_for_fold = bool(mono) and mono_mode == _MONO_MODE_EQUAL_POWER
+    use_torchaudio_resample = (
+        resample_quality_norm == _RESAMPLE_QUALITY_TORCHAUDIO and sr is not None
+    )
+
     audio, out_sr = _get_core_module().load(
         path,
-        sr=sr,
+        sr=(None if use_torchaudio_resample else sr),
         offset=offset,
         duration=duration,
         mono=(False if request_stereo_for_fold else mono),
         layout=layout,
         dtype=dtype,
-        resample_quality=resample_quality,
+        resample_quality=("default" if use_torchaudio_resample else resample_quality_norm),
     )
+
+    if use_torchaudio_resample and int(out_sr) != int(sr):
+        audio = _resample_torchaudio_compat(audio, int(out_sr), int(sr))
+        out_sr = int(sr)
+
     if request_stereo_for_fold:
         if layout == "channels_first":
             audio = _mixdown_channels_first(audio, mono_mode)
@@ -119,9 +152,10 @@ def _resample_torchaudio_compat(audio: mx.array, in_sr: int, out_sr: int) -> mx.
 
 
 def resample(audio, in_sr, out_sr, quality="default"):
-    if str(quality).strip().lower() == "torchaudio_compat":
+    quality_norm = _normalize_resample_quality(quality)
+    if quality_norm == _RESAMPLE_QUALITY_TORCHAUDIO:
         return _resample_torchaudio_compat(audio, int(in_sr), int(out_sr))
-    return _get_core_module().resample(audio, in_sr, out_sr, quality=quality)
+    return _get_core_module().resample(audio, in_sr, out_sr, quality=quality_norm)
 
 
 class _WindowedStreamReader:
