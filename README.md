@@ -77,6 +77,13 @@ Linux source builds require libav and use direct libav-backed paths:
 - Linux `stream()` for non-WAV formats uses direct libav packet/frame decode.
 - Linux `save()` for encoded formats (`.mp3`, `.flac`, `.m4a`, `.aiff/.aif`, `.caf`) uses direct libav encode/mux.
 
+### Wheel portability and `libsoxr`
+
+- `soxr_hq` / `soxr_vhq` are optional and enabled only when `libsoxr` is available at build time.
+- macOS wheel builds are automatically repaired with `delocate` in this project build backend, so external `libsoxr` dylibs are bundled into the wheel instead of relying on Homebrew paths.
+- Linux wheel repair via `auditwheel` is supported and can be enabled with `MLX_AUDIO_IO_REPAIR_LINUX=1` in release CI.
+- To disable wheel repair explicitly (not recommended for release builds), set `MLX_AUDIO_IO_REPAIR_WHEEL=0`.
+
 ### Requirements
 
 - Python 3.10+

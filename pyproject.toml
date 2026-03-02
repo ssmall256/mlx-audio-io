@@ -4,6 +4,8 @@ requires = [
     "nanobind>=2.0.0,<2.11",
     "mlx>=0.30.6,<0.32; platform_system == 'Darwin'",
     "mlx[cpu]>=0.30.6,<0.32; platform_system == 'Linux'",
+    "delocate>=0.11; platform_system == 'Darwin'",
+    "auditwheel>=6.2; platform_system == 'Linux'",
 ]
 build-backend = "build_backend"
 backend-path = ["."]
