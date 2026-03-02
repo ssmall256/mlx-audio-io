@@ -13,7 +13,7 @@ In practice, MLX users often end up with one of these compromises:
 
 `mlx-audio-io` closes that gap with a native backend designed for MLX workloads:
 - direct decode/encode into `mlx.core.array`
-- one Python API (`load`, `save`, `info`, `stream`, `batch_load`) on both macOS and Linux
+- one Python API (`load`, `save`, `info`, `stream`, `batch_load`, `supports_soxr`) on both macOS and Linux
 - consistent validation and error messages across platforms
 - support for training/inference data access patterns (partial reads, chunked streaming, optional resampling)
 
@@ -22,7 +22,7 @@ In practice, MLX users often end up with one of these compromises:
 - macOS backend optimized for Apple Silicon via AudioToolbox
 - Linux backend with native WAV/MP3 fast paths plus libav-backed codec support (FLAC/M4A/AIFF/CAF)
 
-The public Python API is the same on both platforms: `load`, `save`, `info`, `stream`, `batch_load`.
+The public Python API is the same on both platforms: `load`, `save`, `info`, `stream`, `batch_load`, `supports_soxr`.
 
 ## Backend Feature Matrix
 
@@ -87,6 +87,7 @@ Linux source builds require libav and use direct libav-backed paths:
 - Third-party notices for bundled `libsoxr` are shipped in-package at:
   - `mlx_audio_io/THIRD_PARTY_NOTICES.md`
   - `mlx_audio_io/licenses/libsoxr/`
+- Current release publish workflows build and publish `sdist` artifacts; a separate macOS wheel job verifies wheel linkage and notice packaging as a release gate.
 
 ### Requirements
 
@@ -123,13 +124,17 @@ Linux source builds require libav and use direct libav-backed paths:
 ## Quickstart
 
 ```python
-from mlx_audio_io import load, save, info, stream, batch_load
+from mlx_audio_io import load, save, info, stream, batch_load, supports_soxr
 
 # Load
 x, sr = load("speech.wav")
 
 # Resample + mono
 x16, sr16 = load("speech.wav", sr=16000, mono=True)
+
+# Pick best available resampler mode
+quality = "soxr_hq" if supports_soxr() else "high"
+x16_soxr, sr16_soxr = load("speech.wav", sr=16000, resample_quality=quality)
 
 # Metadata without decoding
 meta = info("speech.wav")
@@ -180,7 +185,17 @@ Decode audio into an `mlx.core.array`. Returns `(audio, sample_rate)`.
 
 > On Linux WAV/MP3 fast paths, resample quality levels currently map to the same linear behavior.
 > `soxr_hq`/`soxr_vhq` use true libsoxr resampling (when built with libsoxr).
+> If `soxr_hq`/`soxr_vhq` is requested without libsoxr support, `load()`/`resample()` raise `RuntimeError`.
 > `torchaudio_compat` requires `torch` + `torchaudio` and uses `torchaudio.functional.resample`.
+
+Recommended fallback pattern:
+
+```python
+from mlx_audio_io import load, supports_soxr
+
+quality = "soxr_hq" if supports_soxr() else "high"
+audio, sr = load("speech.wav", sr=16000, resample_quality=quality)
+```
 
 ### `batch_load`
 
@@ -246,6 +261,15 @@ Return `AudioInfo` metadata without decoding sample buffers.
 | `duration` | Duration in seconds |
 | `subtype` | Sample encoding (e.g. `pcm16`, `float32`) |
 | `container` | File format (e.g. `wav`, `mp3`, `m4a`) |
+
+### `supports_soxr`
+
+```python
+supports_soxr()
+```
+
+Return `True` when the installed native extension was built with libsoxr support.
+Use this to select `resample_quality` at runtime.
 
 ## Testing
 
