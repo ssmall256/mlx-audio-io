@@ -113,7 +113,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config \
+            build-essential binutils cmake ninja-build pkg-config \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 
       - name: Install packaging tools
@@ -121,6 +121,9 @@ jobs:
 
       - name: Build sdist and wheel
         run: python -m build
+
+      - name: Verify Linux wheel linkage
+        run: python tools/check_wheel_linkage.py dist/*.whl
 
       - name: Validate metadata
         run: python -m twine check dist/*
@@ -130,6 +133,32 @@ jobs:
         with:
           name: dist-artifacts
           path: dist/*
+
+  wheel-linkage-macos:
+    name: Wheel linkage (macOS, libsoxr bundled)
+    runs-on: macos-14
+    needs: [macos]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install system dependencies
+        run: |
+          brew install cmake ninja ffmpeg libsoxr
+
+      - name: Install packaging tools
+        run: python -m pip install --upgrade pip build
+
+      - name: Build wheel
+        run: python -m build --wheel
+
+      - name: Verify macOS wheel linkage
+        run: python tools/check_wheel_linkage.py dist/*.whl
 
   smoke-linux-x86_64:
     name: Smoke install (Linux x86_64 wheel)

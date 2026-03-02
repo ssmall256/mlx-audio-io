@@ -83,6 +83,10 @@ Linux source builds require libav and use direct libav-backed paths:
 - macOS wheel builds are automatically repaired with `delocate` in this project build backend, so external `libsoxr` dylibs are bundled into the wheel instead of relying on Homebrew paths.
 - Linux wheel repair via `auditwheel` is supported and can be enabled with `MLX_AUDIO_IO_REPAIR_LINUX=1` in release CI.
 - To disable wheel repair explicitly (not recommended for release builds), set `MLX_AUDIO_IO_REPAIR_WHEEL=0`.
+- Release CI verifies wheel linkage with `tools/check_wheel_linkage.py` and fails if absolute host library paths are detected.
+- Third-party notices for bundled `libsoxr` are shipped in-package at:
+  - `mlx_audio_io/THIRD_PARTY_NOTICES.md`
+  - `mlx_audio_io/licenses/libsoxr/`
 
 ### Requirements
 

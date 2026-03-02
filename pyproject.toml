@@ -41,6 +41,11 @@ benchmark = [
 
 [tool.scikit-build]
 wheel.packages = ["python/mlx_audio_io"]
+sdist.include = [
+    "python/mlx_audio_io/THIRD_PARTY_NOTICES.md",
+    "python/mlx_audio_io/licenses/libsoxr/**",
+    "tools/check_wheel_linkage.py",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
