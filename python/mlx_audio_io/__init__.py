@@ -84,6 +84,13 @@ def _mixdown_channels_first(audio: mx.array, mono_mode: str) -> mx.array:
     return mixed.astype(audio.dtype)
 
 
+# Compiled versions fuse the elementwise ops (sum/mean + scale + astype),
+# avoiding intermediate buffers.  Most beneficial in streaming where mixdown
+# runs per-chunk with fixed shapes.
+_compiled_mixdown_channels_last = mx.compile(_mixdown_channels_last)
+_compiled_mixdown_channels_first = mx.compile(_mixdown_channels_first)
+
+
 def load(
     path,
     sr=None,
@@ -136,9 +143,9 @@ def load(
 
     if request_stereo_for_fold:
         if layout == "channels_first":
-            audio = _mixdown_channels_first(audio, mono_mode)
+            audio = _compiled_mixdown_channels_first(audio, mono_mode)
         else:
-            audio = _mixdown_channels_last(audio, mono_mode)
+            audio = _compiled_mixdown_channels_last(audio, mono_mode)
     return audio, out_sr
 
 
@@ -155,7 +162,7 @@ def _resample_torchaudio_compat(audio: mx.array, in_sr: int, out_sr: int) -> mx.
             "quality='torchaudio_compat' requires torch and torchaudio to be installed"
         ) from exc
 
-    x = mx.array(audio).astype(mx.float32)
+    x = audio.astype(mx.float32) if isinstance(audio, mx.array) else mx.array(audio, dtype=mx.float32)
     if x.ndim == 1:
         samples = np.asarray(x, dtype=np.float32)
         tx = torch.from_numpy(samples)[None, :]
@@ -310,7 +317,7 @@ class _MonoModeStreamReader:
         if int(chunk.shape[0]) == 0:
             return chunk, sr
 
-        out = _mixdown_channels_last(chunk, self._mono_mode)
+        out = _compiled_mixdown_channels_last(chunk, self._mono_mode)
         self._frames_read += int(out.shape[0])
         return out, sr
 
