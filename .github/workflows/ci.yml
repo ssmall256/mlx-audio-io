@@ -12,8 +12,6 @@ jobs:
     env:
       UV_LINK_MODE: copy
       MLX_DEVICE: cpu
-      CC: clang
-      CXX: clang++
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -30,12 +28,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config ffmpeg clang \
+            build-essential cmake ninja-build pkg-config ffmpeg \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
-          sudo ln -sf "$(command -v clang)" /usr/bin/gcc
-          sudo ln -sf "$(command -v clang++)" /usr/bin/g++
-          sudo ln -sf "$(command -v clang++)" /usr/local/bin/c++
-          sudo ln -sf "$(command -v clang)" /usr/local/bin/cc
 
       - name: Install project dependencies
         run: uv sync --extra dev
@@ -49,8 +43,6 @@ jobs:
     env:
       UV_LINK_MODE: copy
       MLX_DEVICE: cpu
-      CC: clang
-      CXX: clang++
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,12 +59,8 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config ffmpeg clang \
+            build-essential cmake ninja-build pkg-config ffmpeg \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
-          sudo ln -sf "$(command -v clang)" /usr/bin/gcc
-          sudo ln -sf "$(command -v clang++)" /usr/bin/g++
-          sudo ln -sf "$(command -v clang++)" /usr/local/bin/c++
-          sudo ln -sf "$(command -v clang)" /usr/local/bin/cc
 
       - name: Install project dependencies
         run: uv sync --extra dev
