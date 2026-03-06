@@ -283,6 +283,25 @@ class TestLoadResampleQuality:
             assert sr == 16000
             assert audio.shape[0] > 0
 
+    def test_default_auto_selects_soxr_vhq_when_available(self, pcm16_stereo_44k1):
+        """When sr is set and resample_quality='default', load() should auto-select
+        soxr_vhq if soxr is available, producing results different from 'fastest'."""
+        audio_default, sr_d = load(pcm16_stereo_44k1, sr=16000)
+        audio_fastest, sr_f = load(pcm16_stereo_44k1, sr=16000, resample_quality="fastest")
+        assert sr_d == 16000
+        assert sr_f == 16000
+        assert audio_default.shape == audio_fastest.shape
+        if _HAS_SOXR_NATIVE:
+            # soxr_vhq should produce numerically different output from fastest
+            diff = float(mx.max(mx.abs(audio_default - audio_fastest)))
+            assert diff > 1e-6, f"default should differ from fastest when soxr available, max_diff={diff}"
+
+    def test_default_no_resample_unchanged(self, pcm16_mono_16k):
+        """When sr is None, default quality should not trigger soxr auto-selection."""
+        audio, sr = load(pcm16_mono_16k, resample_quality="default")
+        assert sr == 16000
+        assert audio.shape[0] == 16000
+
     def test_soxr_quality_mode(self, pcm16_stereo_44k1):
         if _HAS_SOXR_NATIVE:
             audio, sr = load(pcm16_stereo_44k1, sr=16000, resample_quality="soxr_hq")

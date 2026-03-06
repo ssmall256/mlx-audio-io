@@ -104,6 +104,12 @@ def load(
     mono_mode = _normalize_mono_mode(mono_mode)
     resample_quality_norm = _normalize_resample_quality(resample_quality)
     request_stereo_for_fold = bool(mono) and mono_mode == _MONO_MODE_EQUAL_POWER
+
+    # When caller asks for resampling (sr is set) with default quality,
+    # auto-select the best available backend: soxr_vhq > best.
+    if resample_quality_norm == "default" and sr is not None:
+        resample_quality_norm = "soxr_vhq" if supports_soxr() else "best"
+
     use_soxr_resample = (
         resample_quality_norm in _RESAMPLE_QUALITY_SOXR_VALUES and sr is not None
     )
