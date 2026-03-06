@@ -129,12 +129,8 @@ from mlx_audio_io import load, save, info, stream, batch_load, supports_soxr
 # Load
 x, sr = load("speech.wav")
 
-# Resample + mono
+# Resample + mono (auto-selects soxr_vhq when available, falls back to "best")
 x16, sr16 = load("speech.wav", sr=16000, mono=True)
-
-# Pick best available resampler mode
-quality = "soxr_hq" if supports_soxr() else "high"
-x16_soxr, sr16_soxr = load("speech.wav", sr=16000, resample_quality=quality)
 
 # Metadata without decoding
 meta = info("speech.wav")
@@ -188,13 +184,10 @@ Decode audio into an `mlx.core.array`. Returns `(audio, sample_rate)`.
 > If `soxr_hq`/`soxr_vhq` is requested without libsoxr support, `load()`/`resample()` raise `RuntimeError`.
 > `torchaudio_compat` requires `torch` + `torchaudio` and uses `torchaudio.functional.resample`.
 
-Recommended fallback pattern:
+When `sr` is specified and `resample_quality` is left at `"default"`, `load()` automatically selects `soxr_vhq` when libsoxr is available, falling back to `"best"` otherwise. You can still override explicitly:
 
 ```python
-from mlx_audio_io import load, supports_soxr
-
-quality = "soxr_hq" if supports_soxr() else "high"
-audio, sr = load("speech.wav", sr=16000, resample_quality=quality)
+audio, sr = load("speech.wav", sr=16000, resample_quality="soxr_hq")
 ```
 
 ### `batch_load`
