@@ -12,6 +12,8 @@ jobs:
     env:
       UV_LINK_MODE: copy
       MLX_DEVICE: cpu
+      CC: clang
+      CXX: clang++
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -28,7 +30,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config ffmpeg \
+            build-essential cmake ninja-build pkg-config ffmpeg clang \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 
       - name: Install project dependencies
@@ -43,6 +45,8 @@ jobs:
     env:
       UV_LINK_MODE: copy
       MLX_DEVICE: cpu
+      CC: clang
+      CXX: clang++
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -59,7 +63,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
-            build-essential cmake ninja-build pkg-config ffmpeg \
+            build-essential cmake ninja-build pkg-config ffmpeg clang \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 
       - name: Install project dependencies
