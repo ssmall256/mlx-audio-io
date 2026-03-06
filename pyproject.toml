@@ -2,8 +2,8 @@
 requires = [
     "scikit-build-core>=0.10",
     "nanobind>=2.0.0,<2.11",
-    "mlx>=0.30.6,<0.32; platform_system == 'Darwin'",
-    "mlx[cpu]>=0.30.6,<0.32; platform_system == 'Linux'",
+    "mlx>=0.31.0,<0.32; platform_system == 'Darwin'",
+    "mlx[cpu]>=0.31.0,<0.32; platform_system == 'Linux'",
     "delocate>=0.11; platform_system == 'Darwin'",
     "auditwheel>=6.2; platform_system == 'Linux'",
 ]
@@ -18,8 +18,8 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "mlx>=0.30.6,<0.32; platform_system == 'Darwin'",
-    "mlx[cpu]>=0.30.6,<0.32; platform_system == 'Linux'",
+    "mlx>=0.31.0,<0.32; platform_system == 'Darwin'",
+    "mlx[cpu]>=0.31.0,<0.32; platform_system == 'Linux'",
     "pytest>=9.0.2",
 ]
 
