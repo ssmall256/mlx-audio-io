@@ -6,7 +6,6 @@ import math
 from typing import Any
 
 import mlx.core as mx
-import numpy as np
 
 from ._native_loader import get_diagnostic_info, load_native_module
 
@@ -154,6 +153,8 @@ def info(path):
 
 
 def _resample_torchaudio_compat(audio: mx.array, in_sr: int, out_sr: int) -> mx.array:
+    import numpy as np
+
     try:
         import torch
         import torchaudio
