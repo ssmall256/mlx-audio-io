@@ -32,6 +32,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config ffmpeg clang \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+          sudo ln -sf "$(command -v clang)" /usr/bin/gcc
+          sudo ln -sf "$(command -v clang++)" /usr/bin/g++
+          sudo ln -sf "$(command -v clang++)" /usr/local/bin/c++
+          sudo ln -sf "$(command -v clang)" /usr/local/bin/cc
 
       - name: Install project dependencies
         run: uv sync --extra dev
@@ -65,6 +69,10 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             build-essential cmake ninja-build pkg-config ffmpeg clang \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
+          sudo ln -sf "$(command -v clang)" /usr/bin/gcc
+          sudo ln -sf "$(command -v clang++)" /usr/bin/g++
+          sudo ln -sf "$(command -v clang++)" /usr/local/bin/c++
+          sudo ln -sf "$(command -v clang)" /usr/local/bin/cc
 
       - name: Install project dependencies
         run: uv sync --extra dev
