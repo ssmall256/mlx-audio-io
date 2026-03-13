@@ -48,6 +48,26 @@ For normal use:
 pip install mlx-audio-io
 ```
 
+### Version policy
+
+`mlx-audio-io` ships one wheel line per exact MLX runtime version. The native
+extension is built and tested against a single MLX release, and the loader
+rejects mismatched MLX versions at import time to avoid hard crashes.
+
+For the current release line:
+
+```bash
+pip install "mlx-audio-io==1.3.10"
+```
+
+This release pins:
+- macOS: `mlx==0.31.0`
+- Linux: `mlx[cpu]==0.31.0`
+
+If you maintain a downstream MLX library, pin `mlx` and `mlx-audio-io`
+together. Do not publish broad `mlx>=...` ranges while depending on
+`mlx-audio-io`, because the native loader requires an exact MLX match anyway.
+
 ### Contributors (source checkout)
 
 For local development and tests:
