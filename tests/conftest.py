@@ -113,6 +113,59 @@ def _write_wav_float32(path, sample_rate, channels, duration_s, freq=440.0):
         f.write(data)
 
 
+def _write_wav_float64(path, sample_rate, channels, duration_s, freq=440.0):
+    """Write a float64 WAV file (IEEE_FLOAT format tag 3) with fact chunk."""
+    num_frames = int(sample_rate * duration_s)
+    samples = []
+    for i in range(num_frames):
+        val = math.sin(2.0 * math.pi * freq * i / sample_rate)
+        for _ in range(channels):
+            samples.append(val)
+
+    data = struct.pack(f"<{len(samples)}d", *samples)
+    bits_per_sample = 64
+    block_align = channels * (bits_per_sample // 8)
+    byte_rate = sample_rate * block_align
+    data_size = len(data)
+
+    # fmt chunk: 18 bytes (extensible with cbSize=0)
+    fmt_chunk_size = 18
+    # fact chunk: 12 bytes total (4 tag + 4 size + 4 data)
+    fact_data = struct.pack("<I", num_frames)
+    fact_chunk_size = 4
+
+    riff_size = (
+        4  # 'WAVE'
+        + 8 + fmt_chunk_size   # fmt chunk
+        + 8 + fact_chunk_size  # fact chunk
+        + 8 + data_size        # data chunk
+    )
+
+    with open(path, "wb") as f:
+        # RIFF header
+        f.write(b"RIFF")
+        f.write(struct.pack("<I", riff_size))
+        f.write(b"WAVE")
+        # fmt chunk (format tag 3 = IEEE_FLOAT)
+        f.write(b"fmt ")
+        f.write(struct.pack("<I", fmt_chunk_size))
+        f.write(struct.pack("<H", 3))   # format tag: IEEE_FLOAT
+        f.write(struct.pack("<H", channels))
+        f.write(struct.pack("<I", sample_rate))
+        f.write(struct.pack("<I", byte_rate))
+        f.write(struct.pack("<H", block_align))
+        f.write(struct.pack("<H", bits_per_sample))
+        f.write(struct.pack("<H", 0))   # cbSize
+        # fact chunk
+        f.write(b"fact")
+        f.write(struct.pack("<I", fact_chunk_size))
+        f.write(fact_data)
+        # data chunk
+        f.write(b"data")
+        f.write(struct.pack("<I", data_size))
+        f.write(data)
+
+
 def _write_aiff(path, sample_rate, channels, duration_s, freq=440.0):
     """Write a PCM16 AIFF file (big-endian) with a sine tone."""
     num_frames = int(sample_rate * duration_s)
@@ -187,6 +240,10 @@ def generate_test_assets():
         os.path.join(ASSETS_DIR, "float32_stereo_48k.wav"),
         sample_rate=48000, channels=2, duration_s=1.0,
     )
+    _write_wav_float64(
+        os.path.join(ASSETS_DIR, "float64_stereo_48k.wav"),
+        sample_rate=48000, channels=2, duration_s=1.0,
+    )
     _write_aiff(
         os.path.join(ASSETS_DIR, "pcm16_stereo_44k1.aiff"),
         sample_rate=44100, channels=2, duration_s=1.0,
@@ -208,6 +265,11 @@ def pcm16_stereo_44k1():
 @pytest.fixture
 def float32_stereo_48k():
     return os.path.join(ASSETS_DIR, "float32_stereo_48k.wav")
+
+
+@pytest.fixture
+def float64_stereo_48k():
+    return os.path.join(ASSETS_DIR, "float64_stereo_48k.wav")
 
 
 @pytest.fixture

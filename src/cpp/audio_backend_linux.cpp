@@ -1328,6 +1328,18 @@ std::pair<mlx::core::array, int> load_wav(
             buffer[i] = static_cast<float>(pcm_buf[i]) * kScale;
         }
         std::free(pcm_buf);
+    } else if (wav.format_tag == 3 && wav.bits_per_sample == 64) {
+        // IEEE float64 -> float32 (downcast; MLX has no float64 dtype)
+        size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
+        double* f64_buf = static_cast<double*>(
+            aligned_alloc_64(sample_count * sizeof(double)));
+        size_t got = fread(f64_buf, 1, static_cast<size_t>(read_bytes), f.get());
+        actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(double));
+        size_t actual_samples = static_cast<size_t>(actual_frames) * wav.channels;
+        for (size_t i = 0; i < actual_samples; ++i) {
+            buffer[i] = static_cast<float>(f64_buf[i]);
+        }
+        std::free(f64_buf);
     } else {
         std::free(buffer);
         throw value_error(
@@ -1417,6 +1429,7 @@ std::pair<mlx::core::array, int> load_mp3(
 }
 
 std::string wav_subtype_from_info(const WavInfo& wav) {
+    if (wav.format_tag == 3 && wav.bits_per_sample == 64) return "float64";
     if (wav.format_tag == 3 && wav.bits_per_sample == 32) return "float32";
     if (wav.format_tag == 1 && wav.bits_per_sample == 8) return "pcm8";
     if (wav.format_tag == 1 && wav.bits_per_sample == 16) return "pcm16";

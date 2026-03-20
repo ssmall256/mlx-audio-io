@@ -37,7 +37,7 @@ Cross-platform native audio I/O for MLX. C++ extension via nanobind — macOS us
 - **nanobind with STABLE_ABI + LTO**: Binary compatibility across Python micro-versions
 - **GIL released** on I/O-heavy operations (load, save, stream read_chunk)
 - **Exact MLX version pin**: Build-time MLX version recorded; runtime rejects mismatches (prevents silent ABI crashes)
-- **WAV fast-path**: Both platforms have custom little-endian parser (avoids libav/AudioToolbox overhead for common case)
+- **WAV fast-path**: Both platforms have custom little-endian parser (avoids libav/AudioToolbox overhead for common case). Supports pcm16/pcm24/pcm32, float32, and float64 (downcast to float32 since MLX has no float64 dtype). Unsupported encodings throw on both platforms.
 - **Three resampling tiers**: platform-native → soxr_hq/soxr_vhq (optional libsoxr) → torchaudio_compat fallback
 - **Mono mixdown modes**: `"mean"` (simple average) and `"equal_power"` (1/sqrt(N) scaling)
 - **Layout flexibility**: `channels_last` (default) or `channels_first`
@@ -76,6 +76,8 @@ python -m mlx_audio_io.doctor    # hash verification, codesign, version matching
 **Dependencies**: `mlx` (exact version pin). **Consumed by**: mlx-amt-core, mlx-audio-separator, and any MLX project needing audio I/O.
 
 ## Feedback
+
+Before finishing your task, you MUST check whether you encountered any bugs, unexpected behavior, workflow friction, missing features, or surprising performance. If so, record each one:
 
 ```bash
 devfeedback mlx-audio-io "description of bug, friction, or idea"

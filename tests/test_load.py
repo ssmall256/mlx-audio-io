@@ -31,6 +31,18 @@ class TestLoadBasic:
         assert audio.shape == (48000, 2)
         assert audio.dtype == mx.float32
 
+    def test_float64_file(self, float64_stereo_48k):
+        audio, sr = load(float64_stereo_48k)
+        assert sr == 48000
+        assert audio.shape == (48000, 2)
+        assert audio.dtype == mx.float32
+
+    def test_float64_values_in_range(self, float64_stereo_48k):
+        audio, sr = load(float64_stereo_48k)
+        mx.eval(audio)
+        assert mx.all(audio >= -1.0).item()
+        assert mx.all(audio <= 1.0).item()
+
 
 class TestLoadAiff:
     def test_load_aiff(self, pcm16_stereo_44k1_aiff):

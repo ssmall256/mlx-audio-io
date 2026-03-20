@@ -627,10 +627,24 @@ std::pair<mlx::core::array, int> load_wav_fast(
         float scale = 1.0f / 2147483648.0f;  // 2^31
         vDSP_vsmul(buffer, 1, &scale, buffer, 1, static_cast<vDSP_Length>(actual_samples));
         std::free(pcm_buf);
+    } else if (wav.format_tag == 3 && wav.bits_per_sample == 64) {
+        // IEEE float64 -> float32 (downcast; MLX has no float64 dtype)
+        size_t sample_count = static_cast<size_t>(frames_to_read) * wav.channels;
+        double* f64_buf = static_cast<double*>(
+            aligned_alloc_64(sample_count * sizeof(double)));
+        size_t got = fread(f64_buf, 1, static_cast<size_t>(read_bytes), f.get());
+        actual_frames = static_cast<int64_t>(got) / (wav.channels * sizeof(double));
+        size_t actual_samples = static_cast<size_t>(actual_frames) * wav.channels;
+        for (size_t i = 0; i < actual_samples; ++i) {
+            buffer[i] = static_cast<float>(f64_buf[i]);
+        }
+        std::free(f64_buf);
     } else {
-        // Unsupported bit depth — should not happen (parse_wav_header validated)
         std::free(buffer);
-        return make_empty_result(wav.sample_rate, wav.channels, mono, layout, dtype);
+        throw std::invalid_argument(
+            "Unsupported WAV encoding: format_tag=" +
+            std::to_string(wav.format_tag) + ", bits_per_sample=" +
+            std::to_string(wav.bits_per_sample));
     }
 
     return wrap_audio_buffer(buffer, actual_frames, wav.channels,

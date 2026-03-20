@@ -571,6 +571,18 @@ float* decode_wav_chunk(
         }
 
         std::free(pcm_buf);
+    } else if (format_tag == 3 && bits_per_sample == 64) {
+        // IEEE float64 -> float32 (downcast; MLX has no float64 dtype)
+        size_t sample_count = static_cast<size_t>(frames_to_read) * channels;
+        double* f64_buf = static_cast<double*>(
+            aligned_alloc_64(sample_count * sizeof(double)));
+        size_t got = fread(f64_buf, 1, static_cast<size_t>(read_bytes), f);
+        actual_frames = static_cast<int64_t>(got) / (channels * sizeof(double));
+        size_t actual_samples = static_cast<size_t>(actual_frames) * channels;
+        for (size_t i = 0; i < actual_samples; ++i) {
+            buffer[i] = static_cast<float>(f64_buf[i]);
+        }
+        std::free(f64_buf);
     } else {
         std::free(buffer);
         throw value_error(
