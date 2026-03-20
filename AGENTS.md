@@ -9,7 +9,8 @@ Cross-platform native audio I/O for MLX. C++ extension (nanobind) with macOS (Au
 - **Exact MLX version pin.** Build-time MLX version is recorded and enforced at runtime. Do not relax this check — ABI mismatches cause silent crashes.
 - **Do not add Python-side audio decoding.** All decoding happens in C++. The Python layer is thin (API, preflight, diagnostics).
 - **GIL must be released** during I/O-heavy C++ operations (load, save, read_chunk). Use `nb::gil_scoped_release`.
-- **WAV fast-path must remain.** Both platforms have custom little-endian WAV parsers that bypass AudioToolbox/libav. Do not route WAV through the codec path.
+- **WAV fast-path must remain.** Both platforms have custom little-endian WAV parsers that bypass AudioToolbox/libav. Do not route WAV through the codec path. Supported encodings: pcm16/pcm24/pcm32, float32, float64 (downcast to float32). New decode branches follow the pcm32 pattern (separate source buffer, loop-convert, free).
+- **Unsupported formats must throw, never silently return empty.** Both platforms must raise on unrecognized WAV encodings. Do not use `make_empty_result` as a fallback for decode failures.
 - **LAME and minimp3 are vendored.** Do not add external MP3 library dependencies. Source lives in `src/vendor/`.
 - **Platform backends are separate files.** `audio_backend_apple.cpp` and `audio_backend_linux.cpp` are compiled exclusively per platform. Do not merge them or add cross-platform ifdefs within a backend file.
 
