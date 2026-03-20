@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+case "${1:-help}" in
+  build)
+    uv sync --extra dev --reinstall-package mlx-audio-io
+    ;;
+  test)
+    uv sync --extra dev --reinstall-package mlx-audio-io
+    uv run pytest -q "${@:2}"
+    ;;
+  clean)
+    rm -rf build/
+    uv sync --extra dev --reinstall-package mlx-audio-io
+    ;;
+  *)
+    echo "Usage: ./dev {build|test|clean}"
+    echo ""
+    echo "  build   Rebuild C++ extension (always recompiles)"
+    echo "  test    Rebuild + run pytest (extra args passed through)"
+    echo "  clean   Nuke build cache and rebuild"
+    ;;
+esac

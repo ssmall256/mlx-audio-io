@@ -47,8 +47,14 @@ Cross-platform native audio I/O for MLX. C++ extension via nanobind — macOS us
 Requires CMake 3.24+, C++17 toolchain, pkg-config.
 
 ```bash
-uv sync --extra dev              # builds C++ extension via scikit-build-core + CMake
+./dev build                      # rebuild C++ extension (always recompiles)
+./dev test                       # rebuild + run all tests
+./dev test -k "float64"          # rebuild + run matching tests
+./dev clean                      # nuke build cache and rebuild
+uv sync --extra dev              # first-time setup only
 ```
+
+**Important**: `uv sync` caches the wheel and won't recompile after C++ source changes. Always use `./dev build` (or `uv sync --extra dev --reinstall-package mlx-audio-io`) after editing C++ files.
 
 **macOS extras**: AudioToolbox + Accelerate frameworks (system), optional libsoxr via Homebrew.
 **Linux extras**: libavformat-dev, libavcodec-dev, libavutil-dev, libswresample-dev.
