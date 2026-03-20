@@ -395,6 +395,26 @@ def main():
         else:
             print()
 
+    # 7. Mono mixdown microbenchmark
+    print("\n7. Mono mixdown (Python-side MLX ops)")
+    from mlx_audio_io import _mixdown_channels_last
+
+    stereo_audio, _ = load(wav_path)
+    mx.eval(stereo_audio)
+
+    def bench_mixdown_mean():
+        result = _mixdown_channels_last(stereo_audio, "mean")
+        mx.eval(result)
+
+    def bench_mixdown_equal_power():
+        result = _mixdown_channels_last(stereo_audio, "equal_power")
+        mx.eval(result)
+
+    p50, p90 = bench(bench_mixdown_mean)
+    print(f"   mixdown (mean):         p50={p50:7.4f}ms  p90={p90:7.4f}ms")
+    p50, p90 = bench(bench_mixdown_equal_power)
+    print(f"   mixdown (equal_power):  p50={p50:7.4f}ms  p90={p90:7.4f}ms")
+
     # Cleanup
     for f in cleanup_files:
         if os.path.exists(f):

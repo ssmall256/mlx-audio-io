@@ -54,6 +54,8 @@ After building wheels: `python tools/check_wheel_linkage.py` — ensures no abso
 
 ## Feedback
 
+Before finishing your task, you MUST check whether you encountered any bugs, unexpected behavior, workflow friction, missing features, or surprising performance. If so, record each one:
+
 ```bash
 devfeedback mlx-audio-io "description of bug, friction, or idea"
 ```
