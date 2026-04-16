@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import os
 from typing import Any
 
 import mlx.core as mx
@@ -28,10 +29,27 @@ _RESAMPLE_QUALITY_ALIASES = {
 }
 _RESAMPLE_QUALITY_TORCHAUDIO = "torchaudio_compat"
 _RESAMPLE_QUALITY_SOXR_VALUES = {"soxr_hq", "soxr_vhq"}
+_LAYOUT_CHANNELS_LAST = "channels_last"
+_LAYOUT_CHANNELS_FIRST = "channels_first"
+_LAYOUT_VALUES = {_LAYOUT_CHANNELS_LAST, _LAYOUT_CHANNELS_FIRST}
+
+
+def _normalize_layout(layout: str) -> str:
+    value = str(layout).strip().lower()
+    if value not in _LAYOUT_VALUES:
+        raise ValueError(
+            "layout must be one of "
+            f"{sorted(_LAYOUT_VALUES)}, got {layout!r}"
+        )
+    return value
 
 
 def _get_core_module() -> Any:
     return load_native_module()
+
+
+def _normalize_path(path) -> str:
+    return os.fspath(path)
 
 
 def _normalize_mono_mode(mono_mode: str) -> str:
@@ -100,7 +118,20 @@ def load(
     layout="channels_last",
     dtype="float32",
     resample_quality="default",
+    low_memory=False,
 ):
+    """Load an audio file.
+
+    ``low_memory=True`` routes through a bounded-scratch streaming resample
+    pipeline (requires libsoxr): the file is read chunk-by-chunk at its native
+    sample rate and pushed through a stateful soxr resampler directly into a
+    single preallocated output buffer, instead of first materializing the full
+    native-SR input array. Peak scratch RAM becomes independent of file length
+    — useful for hour-scale files. Ignored when ``sr`` is ``None`` or equal to
+    the file's native rate. Only the soxr quality modes are supported in this
+    path; ``resample_quality`` must be ``'default'``, ``'soxr_hq'``, or
+    ``'soxr_vhq'`` when ``low_memory=True``.
+    """
     mono_mode = _normalize_mono_mode(mono_mode)
     resample_quality_norm = _normalize_resample_quality(resample_quality)
     request_stereo_for_fold = bool(mono) and mono_mode == _MONO_MODE_EQUAL_POWER
@@ -109,6 +140,40 @@ def load(
     # auto-select the best available backend: soxr_vhq > best.
     if resample_quality_norm == "default" and sr is not None:
         resample_quality_norm = "soxr_vhq" if supports_soxr() else "best"
+
+    # Streaming (bounded-scratch) fast path. Only takes effect when a target
+    # sr is requested that differs from the file's native rate — otherwise the
+    # regular load already streams. When the requested fold is equal_power
+    # mono, mixdown has to happen at the full channel count so we run the
+    # stream with mono=False and fold after — same pattern as the default
+    # load path.
+    if low_memory and sr is not None:
+        if not supports_soxr():
+            raise RuntimeError(
+                "low_memory=True requires libsoxr support; this build has none"
+            )
+        if resample_quality_norm not in _RESAMPLE_QUALITY_SOXR_VALUES:
+            raise ValueError(
+                "low_memory=True only supports soxr quality modes "
+                f"({sorted(_RESAMPLE_QUALITY_SOXR_VALUES)}); "
+                f"got resample_quality={resample_quality!r}"
+            )
+        audio, out_sr = _get_core_module().load_streaming_resample(
+            _normalize_path(path),
+            target_sr=int(sr),
+            offset=offset,
+            duration=duration,
+            mono=(False if request_stereo_for_fold else mono),
+            layout=layout,
+            dtype=dtype,
+            quality=resample_quality_norm,
+        )
+        if request_stereo_for_fold:
+            if layout == "channels_first":
+                audio = _compiled_mixdown_channels_first(audio, mono_mode)
+            else:
+                audio = _compiled_mixdown_channels_last(audio, mono_mode)
+        return audio, out_sr
 
     use_soxr_resample = (
         resample_quality_norm in _RESAMPLE_QUALITY_SOXR_VALUES and sr is not None
@@ -129,7 +194,7 @@ def load(
     )
 
     audio, out_sr = _get_core_module().load(
-        path,
+        _normalize_path(path),
         sr=(None if deferred_resample else sr),
         offset=offset,
         duration=duration,
@@ -139,11 +204,19 @@ def load(
         resample_quality=native_load_quality,
     )
 
+    # Deferred Python-level resample: resample() handles channels_first by
+    # transposing internally, so pass layout through rather than re-deriving.
     if use_torchaudio_resample and int(out_sr) != int(sr):
-        audio = _resample_torchaudio_compat(audio, int(out_sr), int(sr))
+        audio = resample(
+            audio, int(out_sr), int(sr),
+            quality=_RESAMPLE_QUALITY_TORCHAUDIO, layout=layout,
+        )
         out_sr = int(sr)
     elif use_soxr_resample and int(out_sr) != int(sr):
-        audio = resample(audio, int(out_sr), int(sr), quality=resample_quality_norm)
+        audio = resample(
+            audio, int(out_sr), int(sr),
+            quality=resample_quality_norm, layout=layout,
+        )
         out_sr = int(sr)
 
     if request_stereo_for_fold:
@@ -155,7 +228,7 @@ def load(
 
 
 def info(path):
-    return _get_core_module().info(path)
+    return _get_core_module().info(_normalize_path(path))
 
 
 def _resample_torchaudio_compat(audio: mx.array, in_sr: int, out_sr: int) -> mx.array:
@@ -188,16 +261,43 @@ def _resample_torchaudio_compat(audio: mx.array, in_sr: int, out_sr: int) -> mx.
     )
 
 
-def resample(audio, in_sr, out_sr, quality="default"):
+def resample(audio, in_sr, out_sr, quality="default", layout="channels_last"):
+    """Resample audio between sample rates.
+
+    ``layout`` describes the axis order of the input (and thus the output):
+    ``"channels_last"`` means ``[frames, channels]``; ``"channels_first"``
+    means ``[channels, frames]``. 1D input is always treated as a mono frame
+    sequence regardless of ``layout``.
+    """
     quality_norm = _normalize_resample_quality(quality)
+    layout_norm = _normalize_layout(layout)
     if quality_norm in _RESAMPLE_QUALITY_SOXR_VALUES and not supports_soxr():
         raise RuntimeError(
             f"quality={quality_norm!r} requested but mlx-audio-io was built "
             "without libsoxr support"
         )
+
+    transpose_2d = (
+        layout_norm == _LAYOUT_CHANNELS_FIRST
+        and isinstance(audio, mx.array)
+        and audio.ndim == 2
+    )
+    if transpose_2d:
+        # swapaxes alone returns a non-contiguous view; the C++ resamplers
+        # read linearly from data<float>() and would misinterpret the memory
+        # layout. Force a contiguous copy in the transposed orientation.
+        audio = mx.contiguous(mx.swapaxes(audio, 0, 1))
+
     if quality_norm == _RESAMPLE_QUALITY_TORCHAUDIO:
-        return _resample_torchaudio_compat(audio, int(in_sr), int(out_sr))
-    return _get_core_module().resample(audio, in_sr, out_sr, quality=quality_norm)
+        result = _resample_torchaudio_compat(audio, int(in_sr), int(out_sr))
+    else:
+        result = _get_core_module().resample(audio, in_sr, out_sr, quality=quality_norm)
+
+    if transpose_2d and result.ndim == 2:
+        # Contiguous copy so downstream native calls (save, resample again,
+        # etc.) that read linearly see the correct channels_first layout.
+        result = mx.contiguous(mx.swapaxes(result, 0, 1))
+    return result
 
 
 class _WindowedStreamReader:
@@ -359,7 +459,7 @@ def stream(
     try:
         # Preferred path: native stream-level slicing support.
         reader = core.stream(
-            path,
+            _normalize_path(path),
             chunk_frames=chunk_frames,
             chunk_duration=chunk_duration,
             sr=sr,
@@ -374,7 +474,7 @@ def stream(
     except TypeError:
         # Compatibility fallback for older native modules.
         reader = core.stream(
-            path,
+            _normalize_path(path),
             chunk_frames=chunk_frames,
             chunk_duration=chunk_duration,
             sr=sr,
@@ -406,7 +506,7 @@ def save(path, audio, sr, layout="channels_last", encoding="float32", bitrate="a
     """Save an mlx array (or numpy array) to an audio file."""
     audio = _maybe_convert_numpy(audio)
     return _get_core_module().save(
-        path,
+        _normalize_path(path),
         audio,
         sr,
         layout=layout,

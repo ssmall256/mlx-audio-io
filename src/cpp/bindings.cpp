@@ -3,6 +3,7 @@
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 
+#include "audio_backend.h"
 #include "audio_io.h"
 #include "audio_stream.h"
 
@@ -161,6 +162,45 @@ Args:
 
 Raises:
     ValueError: For invalid arguments.
+)");
+
+    // load_streaming_resample() — bounded-scratch streaming resample.
+    m.def("load_streaming_resample",
+          &mlx_audio::backend_load_audio_streaming_resample,
+          "path"_a,
+          "target_sr"_a,
+          "offset"_a = 0.0,
+          "duration"_a = nb::none(),
+          "mono"_a = false,
+          "layout"_a = "channels_last",
+          "dtype"_a = "float32",
+          "quality"_a = "soxr_hq",
+          nb::call_guard<nb::gil_scoped_release>(),
+          R"(Load and resample an audio file using a bounded-scratch streaming pipeline.
+
+Reads the file in chunks at its native sample rate and pushes each chunk
+through a stateful libsoxr resampler directly into a single preallocated
+output buffer. Peak scratch memory is bounded to a single chunk plus the
+soxr filter state, independent of file length.
+
+Requires a build with libsoxr support. For files whose native SR already
+matches target_sr, the call transparently falls back to the regular load().
+
+Args:
+    path: Path to the audio file.
+    target_sr: Output sample rate (must be > 0).
+    offset: Start time in seconds.
+    duration: Duration in seconds. None to read to end.
+    mono: If True, mix down to mono before resampling (saves work).
+    layout: 'channels_last' or 'channels_first'.
+    dtype: Output dtype — 'float32' or 'float16'.
+    quality: 'soxr_hq' (default) or 'soxr_vhq'.
+
+Returns:
+    Tuple of (audio array, target_sr).
+
+Raises:
+    ValueError: If libsoxr support was not compiled in.
 )");
 
     // resample()

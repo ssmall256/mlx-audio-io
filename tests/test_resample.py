@@ -156,6 +156,74 @@ class TestValidation:
         with pytest.raises(ValueError):
             mac.resample(audio, -44100, 16000)
 
+    def test_invalid_layout_raises(self):
+        audio = _make_sine(44100)
+        with pytest.raises(ValueError):
+            mac.resample(audio, 44100, 16000, layout="bogus")
+
+
+class TestLayout:
+    """Covers the layout kwarg on resample() (regression for the memory
+    blow-up where channels_first was interpreted as [frames, channels])."""
+
+    def test_channels_first_2d_matches_channels_last(self):
+        audio_cl = _make_sine(48000, duration=0.25, channels=2)
+        audio_cf = mx.swapaxes(audio_cl, 0, 1)
+        out_cl = mac.resample(audio_cl, 48000, 44100, layout="channels_last")
+        out_cf = mac.resample(audio_cf, 48000, 44100, layout="channels_first")
+        assert out_cl.shape == (out_cf.shape[1], out_cf.shape[0])
+        np.testing.assert_allclose(
+            np.asarray(out_cf), np.asarray(mx.swapaxes(out_cl, 0, 1)),
+            rtol=0.0, atol=1e-6,
+        )
+
+    def test_channels_first_preserves_shape(self):
+        audio_cf = mx.swapaxes(_make_sine(48000, duration=0.25, channels=2), 0, 1)
+        assert audio_cf.shape == (2, 12000)
+        out = mac.resample(audio_cf, 48000, 44100, layout="channels_first")
+        assert out.ndim == 2
+        assert out.shape[0] == 2
+        assert abs(out.shape[1] - 11025) <= 2
+
+    def test_1d_input_ignores_layout(self):
+        mono = mx.array(np.sin(np.linspace(0, 1, 4410, dtype=np.float32)))
+        out_cl = mac.resample(mono, 44100, 16000, layout="channels_last")
+        out_cf = mac.resample(mono, 44100, 16000, layout="channels_first")
+        assert out_cl.ndim == 1
+        assert out_cf.ndim == 1
+        np.testing.assert_array_equal(np.asarray(out_cl), np.asarray(out_cf))
+
+    def test_channels_first_output_survives_save_roundtrip(self, tmp_path):
+        # The channels_first result must be materialized contiguously so
+        # downstream native calls (save, reload) read the right memory.
+        audio_cl = _make_sine(48000, duration=0.25, channels=2)
+        audio_cf = mx.swapaxes(audio_cl, 0, 1)
+        out = mac.resample(audio_cf, 48000, 44100, layout="channels_first")
+        mx.eval(out)
+
+        path = str(tmp_path / "cf.wav")
+        mac.save(path, out, 44100, layout="channels_first")
+        reloaded, sr = mac.load(path, layout="channels_first")
+        mx.eval(reloaded)
+        assert sr == 44100
+        assert reloaded.shape == out.shape
+        np.testing.assert_allclose(
+            np.asarray(reloaded), np.asarray(out), rtol=0.0, atol=1e-5,
+        )
+
+    @pytest.mark.skipif(not _HAS_TORCHAUDIO, reason="torch/torchaudio not installed")
+    def test_channels_first_torchaudio_compat(self):
+        audio_cl = _make_sine(48000, duration=0.25, channels=2)
+        audio_cf = mx.swapaxes(audio_cl, 0, 1)
+        out_cl = mac.resample(audio_cl, 48000, 44100, quality="torchaudio_compat",
+                              layout="channels_last")
+        out_cf = mac.resample(audio_cf, 48000, 44100, quality="torchaudio_compat",
+                              layout="channels_first")
+        np.testing.assert_allclose(
+            np.asarray(out_cf), np.asarray(mx.swapaxes(out_cl, 0, 1)),
+            rtol=0.0, atol=1e-6,
+        )
+
 
 class TestZeroFrames:
     def test_zero_frames_2d(self):

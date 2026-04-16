@@ -43,6 +43,20 @@ class TestLoadBasic:
         assert mx.all(audio >= -1.0).item()
         assert mx.all(audio <= 1.0).item()
 
+    def test_extensible_float32_file(self, extensible_float32_stereo_48k):
+        audio, sr = load(extensible_float32_stereo_48k)
+        assert sr == 48000
+        assert audio.shape == (48000, 2)
+        assert audio.dtype == mx.float32
+
+    def test_extensible_float32_values_match_float32(
+        self, float32_stereo_48k, extensible_float32_stereo_48k
+    ):
+        ref, _ = load(float32_stereo_48k)
+        ext, _ = load(extensible_float32_stereo_48k)
+        mx.eval(ref, ext)
+        assert mx.max(mx.abs(ref - ext)).item() < 1e-6
+
 
 class TestLoadAiff:
     def test_load_aiff(self, pcm16_stereo_44k1_aiff):
@@ -131,6 +145,28 @@ class TestLoadLayouts:
     def test_invalid_layout(self, pcm16_mono_16k):
         with pytest.raises(ValueError):
             load(pcm16_mono_16k, layout="invalid")
+
+    def test_channels_first_with_resample(self, float32_stereo_48k):
+        # Regression: prior to the fix, deferred (Python-level) resample was
+        # fed channels_first audio directly. The resampler treated shape[0]
+        # (channels=2) as frames and shape[1] (frames=48000) as channels,
+        # allocating ~(2*ratio+256) * 48000 * 4 bytes and producing nonsense
+        # output. For long files this ballooned to hundreds of GB.
+        audio, sr = load(float32_stereo_48k, sr=44100, layout="channels_first")
+        assert sr == 44100
+        assert audio.ndim == 2
+        assert audio.shape[0] == 2
+        assert abs(audio.shape[1] - 44100) <= 2
+
+    def test_channels_first_resample_matches_channels_last(self, float32_stereo_48k):
+        last, sr_last = load(float32_stereo_48k, sr=44100, layout="channels_last")
+        first, sr_first = load(float32_stereo_48k, sr=44100, layout="channels_first")
+        assert sr_last == sr_first == 44100
+        mx.eval(last, first)
+        # channels_first should be the transpose of channels_last
+        assert first.shape == (last.shape[1], last.shape[0])
+        diff = mx.max(mx.abs(first - mx.swapaxes(last, 0, 1))).item()
+        assert diff < 1e-5
 
 
 class TestLoadMono:

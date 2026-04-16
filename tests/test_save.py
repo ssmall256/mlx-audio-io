@@ -2,6 +2,7 @@
 
 import math
 import os
+from pathlib import Path
 import sys
 import tempfile
 
@@ -57,6 +58,22 @@ class TestSaveBasic:
             assert max_diff < 1e-5
         finally:
             os.unlink(path)
+
+    def test_save_accepts_pathlike(self):
+        sr = 16000
+        frames = sr
+        t = mx.arange(frames) / sr
+        sine = mx.sin(2.0 * math.pi * 440.0 * t)
+        audio = mx.reshape(sine, [frames, 1])
+        mx.eval(audio)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = Path(tmpdir) / "pathlike.wav"
+            save(path, audio, sr)
+            loaded, loaded_sr = load(path)
+            mx.eval(loaded)
+            assert loaded_sr == sr
+            assert loaded.shape == (frames, 1)
 
 
 class TestSaveChannelsFirst:

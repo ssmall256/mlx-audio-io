@@ -158,7 +158,27 @@ bool parse_wav_header(const std::string& path, WavInfo& out) {
             memcpy(&block_align, fmt + 12, 2);
             memcpy(&bits_per_sample, fmt + 14, 2);
 
-            if (format_tag != 1 && format_tag != 3) return false;
+            long remaining;
+            if (format_tag == 0xFFFE) {
+                // WAVE_FORMAT_EXTENSIBLE: read cbSize + extension to resolve SubFormat
+                if (chunk_size < 40) return false;
+                uint8_t ext[24]; // cbSize(2)+wValidBits(2)+dwChannelMask(4)+SubFormat GUID(16)
+                if (fread(ext, 1, 24, f.get()) != 24) return false;
+                // SubFormat GUID at ext[8..23]; bytes 12..23 are data2+data3+data4
+                static const uint8_t kGuidBase[12] = {
+                    0x00, 0x00, 0x10, 0x00, 0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71
+                };
+                if (memcmp(ext + 12, kGuidBase, 12) != 0) return false;
+                uint32_t data1;
+                memcpy(&data1, ext + 8, 4);
+                if (data1 == 1) format_tag = 1;
+                else if (data1 == 3) format_tag = 3;
+                else return false;
+                remaining = static_cast<long>(chunk_size) - 40;
+            } else {
+                if (format_tag != 1 && format_tag != 3) return false;
+                remaining = static_cast<long>(chunk_size) - 16;
+            }
 
             out.format_tag = static_cast<int>(format_tag);
             out.sample_rate = static_cast<int>(sample_rate);
@@ -167,7 +187,6 @@ bool parse_wav_header(const std::string& path, WavInfo& out) {
 
             found_fmt = true;
 
-            long remaining = static_cast<long>(chunk_size) - 16;
             if (remaining > 0) fseek(f.get(), remaining, SEEK_CUR);
         } else if (memcmp(chunk_hdr, "data", 4) == 0) {
             if (!found_fmt) return false;

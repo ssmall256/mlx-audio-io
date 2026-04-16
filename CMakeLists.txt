@@ -137,6 +137,7 @@ nanobind_add_module(
     src/cpp/mp3_decoder.cpp
     src/cpp/mp3_encoder.cpp
     src/cpp/linux_libav_probe.cpp
+    src/cpp/resample_stream.cpp
     ${BACKEND_SOURCES}
     ${LAME_SOURCES}
 )
