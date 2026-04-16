@@ -41,6 +41,7 @@ benchmark = [
 [tool.scikit-build]
 wheel.packages = ["python/mlx_audio_io"]
 build-dir = "build/{wheel_tag}"
+editable.verbose = false
 sdist.include = [
     "python/mlx_audio_io/THIRD_PARTY_NOTICES.md",
     "python/mlx_audio_io/licenses/libsoxr/**",

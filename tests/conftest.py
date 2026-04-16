@@ -6,10 +6,46 @@ import shutil
 import struct
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 ASSETS_DIR = os.path.join(os.path.dirname(__file__), "assets")
+
+_ROOT = Path(__file__).parent.parent
+
+
+def _installed_so() -> Path | None:
+    """Find _core.so in the venv without importing mlx_audio_io."""
+    for so in _ROOT.glob(".venv/lib/python*/site-packages/mlx_audio_io/_core.cpython-*.so"):
+        return so
+    return None
+
+
+def _stale_cpp_sources(so: Path) -> list[Path]:
+    so_mtime = so.stat().st_mtime
+    cpp_dir = _ROOT / "src" / "cpp"
+    return [f for f in (*cpp_dir.glob("*.cpp"), *cpp_dir.glob("*.h"))
+            if f.stat().st_mtime > so_mtime]
+
+
+def pytest_configure(config):
+    """Rebuild C++ extension when sources are newer than the installed .so."""
+    so = _installed_so()
+    if so is None:
+        return
+    stale = _stale_cpp_sources(so)
+    if not stale:
+        return
+    names = ", ".join(f.name for f in stale[:3])
+    suffix = f" (+{len(stale) - 3} more)" if len(stale) > 3 else ""
+    print(f"\nC++ sources changed ({names}{suffix}), rebuilding extension…", flush=True)
+    result = subprocess.run(
+        ["uv", "sync", "--extra", "dev", "--reinstall-package", "mlx-audio-io"],
+        cwd=str(_ROOT),
+    )
+    if result.returncode != 0:
+        raise SystemExit("Extension rebuild failed — fix the build error and re-run tests.")
 
 
 def pytest_collection_modifyitems(config, items):
@@ -166,6 +202,68 @@ def _write_wav_float64(path, sample_rate, channels, duration_s, freq=440.0):
         f.write(data)
 
 
+def _write_wav_extensible_float32(path, sample_rate, channels, duration_s, freq=440.0):
+    """Write a float32 WAV using WAVE_FORMAT_EXTENSIBLE (format tag 0xFFFE)."""
+    num_frames = int(sample_rate * duration_s)
+    samples = []
+    for i in range(num_frames):
+        val = math.sin(2.0 * math.pi * freq * i / sample_rate)
+        for _ in range(channels):
+            samples.append(val)
+
+    data = struct.pack(f"<{len(samples)}f", *samples)
+    bits_per_sample = 32
+    block_align = channels * (bits_per_sample // 8)
+    byte_rate = sample_rate * block_align
+    data_size = len(data)
+
+    # fmt chunk: 40 bytes (WAVEFORMATEXTENSIBLE)
+    fmt_chunk_size = 40
+    # fact chunk
+    fact_data = struct.pack("<I", num_frames)
+    fact_chunk_size = 4
+
+    riff_size = (
+        4
+        + 8 + fmt_chunk_size
+        + 8 + fact_chunk_size
+        + 8 + data_size
+    )
+
+    # KSDATAFORMAT_SUBTYPE_IEEE_FLOAT GUID:
+    # {00000003-0000-0010-8000-00AA00389B71}
+    # stored as: data1(4LE) data2(2LE) data3(2LE) data4(8BE)
+    subfmt_guid = struct.pack("<IHH", 3, 0, 0x0010) + bytes([
+        0x80, 0x00, 0x00, 0xAA, 0x00, 0x38, 0x9B, 0x71
+    ])
+
+    with open(path, "wb") as f:
+        f.write(b"RIFF")
+        f.write(struct.pack("<I", riff_size))
+        f.write(b"WAVE")
+        # fmt chunk (WAVE_FORMAT_EXTENSIBLE = 0xFFFE)
+        f.write(b"fmt ")
+        f.write(struct.pack("<I", fmt_chunk_size))
+        f.write(struct.pack("<H", 0xFFFE))          # wFormatTag
+        f.write(struct.pack("<H", channels))         # nChannels
+        f.write(struct.pack("<I", sample_rate))      # nSamplesPerSec
+        f.write(struct.pack("<I", byte_rate))        # nAvgBytesPerSec
+        f.write(struct.pack("<H", block_align))      # nBlockAlign
+        f.write(struct.pack("<H", bits_per_sample))  # wBitsPerSample
+        f.write(struct.pack("<H", 22))               # cbSize (extension bytes)
+        f.write(struct.pack("<H", bits_per_sample))  # wValidBitsPerSample
+        f.write(struct.pack("<I", 0))                # dwChannelMask
+        f.write(subfmt_guid)                         # SubFormat GUID (16 bytes)
+        # fact chunk
+        f.write(b"fact")
+        f.write(struct.pack("<I", fact_chunk_size))
+        f.write(fact_data)
+        # data chunk
+        f.write(b"data")
+        f.write(struct.pack("<I", data_size))
+        f.write(data)
+
+
 def _write_aiff(path, sample_rate, channels, duration_s, freq=440.0):
     """Write a PCM16 AIFF file (big-endian) with a sine tone."""
     num_frames = int(sample_rate * duration_s)
@@ -244,6 +342,10 @@ def generate_test_assets():
         os.path.join(ASSETS_DIR, "float64_stereo_48k.wav"),
         sample_rate=48000, channels=2, duration_s=1.0,
     )
+    _write_wav_extensible_float32(
+        os.path.join(ASSETS_DIR, "extensible_float32_stereo_48k.wav"),
+        sample_rate=48000, channels=2, duration_s=1.0,
+    )
     _write_aiff(
         os.path.join(ASSETS_DIR, "pcm16_stereo_44k1.aiff"),
         sample_rate=44100, channels=2, duration_s=1.0,
@@ -270,6 +372,11 @@ def float32_stereo_48k():
 @pytest.fixture
 def float64_stereo_48k():
     return os.path.join(ASSETS_DIR, "float64_stereo_48k.wav")
+
+
+@pytest.fixture
+def extensible_float32_stereo_48k():
+    return os.path.join(ASSETS_DIR, "extensible_float32_stereo_48k.wav")
 
 
 @pytest.fixture

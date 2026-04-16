@@ -121,7 +121,22 @@ def resolve_native_path() -> Path:
     return native_path
 
 
+def _is_editable_install() -> bool:
+    try:
+        dist = importlib_metadata.distribution("mlx-audio-io")
+        text = dist.read_text("direct_url.json")
+        if text:
+            import json
+            data = json.loads(text)
+            return bool(data.get("dir_info", {}).get("editable"))
+    except Exception:
+        pass
+    return False
+
+
 def verify_record_hash(native_path: Path) -> None:
+    if _is_editable_install():
+        return
     try:
         dist = importlib_metadata.distribution("mlx-audio-io")
     except importlib_metadata.PackageNotFoundError as exc:

@@ -37,10 +37,11 @@ Cross-platform native audio I/O for MLX. C++ extension via nanobind — macOS us
 - **nanobind with STABLE_ABI + LTO**: Binary compatibility across Python micro-versions
 - **GIL released** on I/O-heavy operations (load, save, stream read_chunk)
 - **Exact MLX version pin**: Build-time MLX version recorded; runtime rejects mismatches (prevents silent ABI crashes)
-- **WAV fast-path**: Both platforms have custom little-endian parser (avoids libav/AudioToolbox overhead for common case). Supports pcm16/pcm24/pcm32, float32, and float64 (downcast to float32 since MLX has no float64 dtype). Unsupported encodings throw on both platforms.
+- **WAV fast-path**: Both platforms have custom little-endian parser (avoids libav/AudioToolbox overhead for common case). Supports pcm16/pcm24/pcm32, float32, and float64 (downcast to float32 since MLX has no float64 dtype). WAVE_FORMAT_EXTENSIBLE (0xFFFE) with PCM or IEEE-float SubFormat is resolved to format_tag 1/3 during header parse. Unsupported encodings throw on both platforms.
 - **Three resampling tiers**: platform-native → soxr_hq/soxr_vhq (optional libsoxr) → torchaudio_compat fallback
+- **Bounded-scratch streaming resample** (`load(..., low_memory=True)`): for hour-scale files, reads the source in chunks at native SR and pushes each chunk through a stateful libsoxr resampler directly into a single preallocated output buffer. Peak scratch RAM is independent of file length. Requires soxr; only `soxr_hq`/`soxr_vhq` qualities are accepted; ignored when `sr` is `None`.
 - **Mono mixdown modes**: `"mean"` (simple average) and `"equal_power"` (1/sqrt(N) scaling)
-- **Layout flexibility**: `channels_last` (default) or `channels_first`
+- **Layout flexibility**: `channels_last` (default) or `channels_first`. `resample()` takes a `layout` argument — 2D `channels_first` input is transposed to contiguous `channels_last` before native resample and transposed back after (avoids the `mx.swapaxes` non-contiguous-view trap, where C++ `data<float>()` reads linearly and ignores strides).
 
 ## Build
 
@@ -48,13 +49,13 @@ Requires CMake 3.24+, C++17 toolchain, pkg-config.
 
 ```bash
 ./dev build                      # rebuild C++ extension (always recompiles)
-./dev test                       # rebuild + run all tests
-./dev test -k "float64"          # rebuild + run matching tests
+./dev test                       # run tests (auto-rebuilds if .cpp/.h sources changed)
+./dev test -k "float64"          # run matching tests
 ./dev clean                      # nuke build cache and rebuild
 uv sync --extra dev              # first-time setup only
 ```
 
-**Important**: `uv sync` caches the wheel and won't recompile after C++ source changes. Always use `./dev build` (or `uv sync --extra dev --reinstall-package mlx-audio-io`) after editing C++ files.
+**Important**: `pytest_configure` in `conftest.py` detects stale C++ sources automatically — if any `.cpp`/`.h` file is newer than the installed `.so`, it triggers a full rebuild before collection. Use `./dev build` only when you want to force a rebuild without running tests (e.g. to see compile output).
 
 **macOS extras**: AudioToolbox + Accelerate frameworks (system), optional libsoxr via Homebrew.
 **Linux extras**: libavformat-dev, libavcodec-dev, libavutil-dev, libswresample-dev.

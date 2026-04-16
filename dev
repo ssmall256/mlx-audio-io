@@ -6,7 +6,7 @@ case "${1:-help}" in
     uv sync --extra dev --reinstall-package mlx-audio-io
     ;;
   test)
-    uv sync --extra dev --reinstall-package mlx-audio-io
+    uv sync --extra dev
     uv run pytest -q "${@:2}"
     ;;
   clean)
@@ -17,7 +17,7 @@ case "${1:-help}" in
     echo "Usage: ./dev {build|test|clean}"
     echo ""
     echo "  build   Rebuild C++ extension (always recompiles)"
-    echo "  test    Rebuild + run pytest (extra args passed through)"
+    echo "  test    Run pytest (auto-rebuilds if .cpp/.h sources changed)"
     echo "  clean   Nuke build cache and rebuild"
     ;;
 esac
