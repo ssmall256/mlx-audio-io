@@ -116,7 +116,7 @@ Linux source builds require libav and use direct libav-backed paths:
   - macOS: Apple Silicon + `mlx`
   - Linux: `mlx[cpu]` (current default)
 - Source builds:
-  - CMake 3.24+, C++17 toolchain, `pkg-config`
+  - CMake 3.24+, C++20 toolchain, `pkg-config`
   - Linux default build: `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`, `libswresample-dev`
 
 ### Linux Troubleshooting
