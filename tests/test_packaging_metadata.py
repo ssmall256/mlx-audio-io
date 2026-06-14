@@ -6,8 +6,9 @@ from pathlib import Path
 
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _ROOT / "pyproject.toml"
-_DARWIN_MLX = "mlx==0.31.0; platform_system == 'Darwin'"
-_LINUX_MLX = "mlx[cpu]==0.31.0; platform_system == 'Linux'"
+_DARWIN_MLX = "mlx==0.31.2; platform_system == 'Darwin'"
+_LINUX_MLX = "mlx[cpu]==0.31.2; platform_system == 'Linux'"
+_NANOBIND = "nanobind==2.12.0"
 
 
 def _load_pyproject() -> dict:
@@ -28,6 +29,7 @@ def test_build_requires_match_runtime_mlx_pins():
     build_requires = data["build-system"]["requires"]
     runtime_dependencies = data["project"]["dependencies"]
 
+    assert _NANOBIND in build_requires
     assert _DARWIN_MLX in build_requires
     assert _LINUX_MLX in build_requires
     assert _DARWIN_MLX in runtime_dependencies

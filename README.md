@@ -57,12 +57,12 @@ rejects mismatched MLX versions at import time to avoid hard crashes.
 For the current release line:
 
 ```bash
-pip install "mlx-audio-io==1.3.10"
+pip install "mlx-audio-io==1.3.11"
 ```
 
 This release pins:
-- macOS: `mlx==0.31.0`
-- Linux: `mlx[cpu]==0.31.0`
+- macOS: `mlx==0.31.2`
+- Linux: `mlx[cpu]==0.31.2`
 
 If you maintain a downstream MLX library, pin `mlx` and `mlx-audio-io`
 together. Do not publish broad `mlx>=...` ranges while depending on

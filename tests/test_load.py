@@ -359,6 +359,25 @@ class TestLoadResampleQuality:
             with pytest.raises(RuntimeError, match="without libsoxr support"):
                 load(pcm16_stereo_44k1, sr=16000, resample_quality="soxr_hq")
 
+    def test_48k_to_44k1_frame_count_matches_rate(self, float32_stereo_48k):
+        """Regression: a 48kHz file loaded with sr=44100 must actually be
+        resampled — output frame count must reflect the 44100/48000 ratio,
+        not be the untouched native-rate frame count. Previously an older
+        pinned version could report sr=44100 while returning the original
+        48kHz array, causing ~8.8% timing drift downstream."""
+        native_frames = 48000  # fixture is 1.0s @ 48k
+        for quality in ("default", "fastest", "best", "soxr_hq", "soxr_vhq"):
+            if quality in ("soxr_hq", "soxr_vhq") and not _HAS_SOXR_NATIVE:
+                continue
+            audio, sr = load(float32_stereo_48k, sr=44100, resample_quality=quality)
+            assert sr == 44100, f"quality={quality}: expected sr=44100, got {sr}"
+            expected = int(math.floor(native_frames * 44100 / 48000))
+            got = int(audio.shape[0])
+            assert abs(got - expected) <= 2, (
+                f"quality={quality}: expected ~{expected} frames at 44100, "
+                f"got {got} (would be {native_frames} if not resampled)"
+            )
+
 
 class TestLoadErrors:
     def test_file_not_found(self):
