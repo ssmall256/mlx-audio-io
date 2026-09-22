@@ -50,9 +50,15 @@ pip install mlx-audio-io
 
 ### Version policy
 
-`mlx-audio-io` ships one wheel line per exact MLX runtime version. The native
-extension is built and tested against a single MLX release, and the loader
-rejects mismatched MLX versions at import time to avoid hard crashes.
+`mlx-audio-io` ships one wheel line per MLX minor version. The native
+extension links `libmlx` directly and shares nanobind's type registry, and MLX
+has no stable C++ ABI — `StreamOrDevice` gained a variant alternative in MLX
+0.32.0, which remangles every operation that takes a stream — so a binary built
+against 0.31.x cannot load against 0.32.x.
+
+Each build records the MLX versions it was actually compiled and tested
+against, and the loader rejects anything else at import time rather than
+crashing later inside a `load()` or `save()`.
 
 For the current release line:
 
@@ -60,13 +66,15 @@ For the current release line:
 pip install "mlx-audio-io==1.3.11"
 ```
 
-This release pins:
-- macOS: `mlx==0.31.2`
-- Linux: `mlx[cpu]==0.31.2`
+This release requires:
+- macOS: `mlx>=0.31.2,<0.32`
+- Linux: `mlx[cpu]>=0.31.2,<0.32`
 
-If you maintain a downstream MLX library, pin `mlx` and `mlx-audio-io`
-together. Do not publish broad `mlx>=...` ranges while depending on
-`mlx-audio-io`, because the native loader requires an exact MLX match anyway.
+If you maintain a downstream MLX library, keep your `mlx` range inside the same
+minor as the `mlx-audio-io` wheel you depend on. To try an unverified MLX
+version — for a compatibility investigation, not for production — set
+`MLX_AUDIO_IO_ALLOW_MLX_MISMATCH=1`, which turns the import-time rejection into
+a `RuntimeWarning`. Expect native crashes if the ABI actually differs.
 
 ### Contributors (source checkout)
 

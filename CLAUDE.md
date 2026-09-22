@@ -36,7 +36,7 @@ Cross-platform native audio I/O for MLX. C++ extension via nanobind — macOS us
 
 - **nanobind with STABLE_ABI + LTO**: Binary compatibility across Python micro-versions
 - **GIL released** on I/O-heavy operations (load, save, stream read_chunk)
-- **Exact MLX version pin**: Build-time MLX version recorded; runtime rejects mismatches (prevents silent ABI crashes)
+- **MLX version gate**: build records the MLX versions it was compiled and tested against (`MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS`); runtime rejects anything else (prevents silent ABI crashes). `MLX_AUDIO_IO_ALLOW_MLX_MISMATCH=1` downgrades it to a warning for experiments.
 - **WAV fast-path**: Both platforms have custom little-endian parser (avoids libav/AudioToolbox overhead for common case). Supports pcm16/pcm24/pcm32, float32, and float64 (downcast to float32 since MLX has no float64 dtype). WAVE_FORMAT_EXTENSIBLE (0xFFFE) with PCM or IEEE-float SubFormat is resolved to format_tag 1/3 during header parse. Unsupported encodings throw on both platforms.
 - **Three resampling tiers**: platform-native → soxr_hq/soxr_vhq (optional libsoxr) → torchaudio_compat fallback
 - **Bounded-scratch streaming resample** (`load(..., low_memory=True)`): for hour-scale files, reads the source in chunks at native SR and pushes each chunk through a stateful libsoxr resampler directly into a single preallocated output buffer. Peak scratch RAM is independent of file length. Requires soxr; only `soxr_hq`/`soxr_vhq` qualities are accepted; ignored when `sr` is `None`.
@@ -80,7 +80,7 @@ python -m mlx_audio_io.doctor    # hash verification, codesign, version matching
 
 ## Ecosystem
 
-**Dependencies**: `mlx` (exact version pin). **Consumed by**: mlx-amt-core, mlx-audio-separator, and any MLX project needing audio I/O.
+**Dependencies**: `mlx` (bounded to one minor; build-verified version list enforced at import). **Consumed by**: mlx-amt-core, mlx-audio-separator, and any MLX project needing audio I/O.
 
 ## Feedback
 

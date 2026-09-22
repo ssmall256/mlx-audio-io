@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import importlib.metadata as importlib_metadata
 import importlib.resources as importlib_resources
+import importlib.util
 import json
+from pathlib import Path
 from typing import Any
 
 
@@ -12,12 +14,42 @@ def _normalize_optional(value: Any) -> Any:
     return value
 
 
+def _native_package_dir() -> Path | None:
+    """Directory holding the compiled extension.
+
+    Editable installs resolve ``mlx_audio_io`` to the source tree, which only
+    contains ``_build_info.json.in``. The generated JSON lives beside the
+    compiled ``_core`` module in site-packages, so look there too -- otherwise
+    build metadata reads as unknown and the MLX version gate silently no-ops in
+    exactly the checkouts where it is most likely to matter.
+    """
+    try:
+        spec = importlib.util.find_spec("mlx_audio_io._core")
+    except (ImportError, AttributeError, ValueError):
+        return None
+    if spec is None or not spec.origin:
+        return None
+    return Path(spec.origin).parent
+
+
 def _read_embedded_build_info() -> dict[str, Any]:
+    text: str | None = None
     try:
         text = importlib_resources.files("mlx_audio_io").joinpath("_build_info.json").read_text(
             encoding="utf-8"
         )
     except (FileNotFoundError, ModuleNotFoundError, OSError):
+        text = None
+
+    if text is None:
+        native_dir = _native_package_dir()
+        if native_dir is not None:
+            try:
+                text = (native_dir / "_build_info.json").read_text(encoding="utf-8")
+            except OSError:
+                text = None
+
+    if text is None:
         return {}
 
     try:
@@ -115,6 +147,7 @@ def load_build_info() -> dict[str, Any]:
         "build_os_version": None,
         "deployment_target": None,
         "build_mlx_version": None,
+        "compatible_mlx_versions": None,
         "arch": None,
         "python_tag": None,
         "wheel_version": None,

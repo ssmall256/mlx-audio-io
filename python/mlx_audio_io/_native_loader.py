@@ -10,6 +10,7 @@ import re
 import subprocess
 import sys
 import threading
+import warnings
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,38 @@ def _normalize_optional(value: Any) -> Any:
     if value in ("", "null", "None"):
         return None
     return value
+
+
+_ALLOW_MISMATCH_ENV = "MLX_AUDIO_IO_ALLOW_MLX_MISMATCH"
+
+
+def _compatible_mlx_versions(build: dict) -> list[str]:
+    """MLX versions this binary was built and tested against.
+
+    The extension links libmlx directly and shares nanobind's type registry via
+    NB_DOMAIN, so it is only loadable against an ABI-compatible MLX. MLX ships
+    no soname versioning, and types passed by value across the boundary do
+    change between minors -- `StreamOrDevice` gained a variant alternative in
+    0.32.0, which remangles every op that takes a stream. So this is a list of
+    versions a build was actually verified against, not an open range.
+    """
+    declared = build.get("compatible_mlx_versions")
+    versions: list[str] = []
+    if isinstance(declared, (list, tuple)):
+        versions = [str(v).strip() for v in declared if str(v).strip()]
+    elif isinstance(declared, str):
+        versions = [part.strip() for part in declared.split(",") if part.strip()]
+    build_version = _normalize_optional(build.get("build_mlx_version"))
+    if build_version and str(build_version).lower() != "unknown":
+        if str(build_version) not in versions:
+            versions.append(str(build_version))
+    return versions
+
+
+def _mlx_mismatch_allowed() -> bool:
+    import os
+
+    return os.getenv(_ALLOW_MISMATCH_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _runtime_mlx_version() -> str | None:
@@ -283,20 +316,34 @@ def verify_compatibility(native_path: Path, build_info: dict[str, Any] | None = 
             )
 
     build_mlx_version = _normalize_optional(build.get("build_mlx_version"))
-    if build_mlx_version and str(build_mlx_version).lower() != "unknown":
+    compatible = _compatible_mlx_versions(build)
+    if compatible:
         runtime_mlx_version = _runtime_mlx_version()
+        supported = ", ".join(compatible)
         if runtime_mlx_version is None:
             raise RuntimeError(
-                "MLX runtime not found: mlx-audio-io native binary requires "
-                f"mlx=={build_mlx_version}, but `mlx` is not installed.\n"
+                "MLX runtime not found: the mlx-audio-io native binary requires one of "
+                f"mlx=={supported}, but `mlx` is not installed.\n"
                 "Install a matching MLX runtime before using mlx-audio-io."
             )
-        if runtime_mlx_version != str(build_mlx_version):
-            raise RuntimeError(
-                "MLX version mismatch: mlx-audio-io native binary was built against "
-                f"mlx=={build_mlx_version}, but runtime has mlx=={runtime_mlx_version}.\n"
-                "This can trigger native crashes in load/save paths.\n"
-                f"Fix: pip install -U \"mlx=={build_mlx_version}\" \"mlx-audio-io\""
+        if runtime_mlx_version not in compatible:
+            message = (
+                "MLX version mismatch: the mlx-audio-io native binary was built against "
+                f"mlx=={build_mlx_version} and is verified against {supported}, but the "
+                f"runtime has mlx=={runtime_mlx_version}.\n"
+                "MLX has no stable C++ ABI, so this can crash in load/save paths.\n"
+                f"Fix: pip install -U \"mlx=={build_mlx_version}\" \"mlx-audio-io\", or "
+                "install an mlx-audio-io build made for your MLX version."
+            )
+            if not _mlx_mismatch_allowed():
+                raise RuntimeError(
+                    message
+                    + f"\nTo override at your own risk, set {_ALLOW_MISMATCH_ENV}=1."
+                )
+            warnings.warn(
+                message + f"\nContinuing because {_ALLOW_MISMATCH_ENV} is set.",
+                RuntimeWarning,
+                stacklevel=2,
             )
 
 

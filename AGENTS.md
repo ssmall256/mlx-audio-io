@@ -6,7 +6,7 @@ Cross-platform native audio I/O for MLX. C++ extension (nanobind) with macOS (Au
 
 ## Hard Rules
 
-- **Exact MLX version pin.** Build-time MLX version is recorded and enforced at runtime. Do not relax this check — ABI mismatches cause silent crashes.
+- **MLX version gate.** The build records the MLX versions it was compiled and tested against, and the loader rejects any other MLX at import time. Do not remove this check and do not widen the list to versions nobody built against — MLX has no stable C++ ABI, and mismatches cause silent crashes. Add a version only after rebuilding and running the suite against it (`MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS`), and keep a wheel's `mlx` requirement inside a single MLX minor.
 - **Do not add Python-side audio decoding.** All decoding happens in C++. The Python layer is thin (API, preflight, diagnostics).
 - **GIL must be released** during I/O-heavy C++ operations (load, save, read_chunk). Use `nb::gil_scoped_release`.
 - **WAV fast-path must remain.** Both platforms have custom little-endian WAV parsers that bypass AudioToolbox/libav. Do not route WAV through the codec path. Supported encodings: pcm16/pcm24/pcm32, float32, float64 (downcast to float32). WAVE_FORMAT_EXTENSIBLE (0xFFFE) with PCM or IEEE-float SubFormat is also handled — the header parser resolves it to format_tag 1 or 3 before decode. New decode branches follow the pcm32 pattern (separate source buffer, loop-convert, free).

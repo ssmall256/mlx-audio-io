@@ -200,6 +200,15 @@ if("${MLX_AUDIO_IO_BUILD_MLX_VERSION}" STREQUAL "")
     set(MLX_AUDIO_IO_BUILD_MLX_VERSION "unknown")
 endif()
 
+# MLX versions this binary is declared compatible with, as a comma-separated
+# list. MLX has no stable C++ ABI and no soname versioning, so this must only
+# ever list versions the build was actually compiled and tested against --
+# never an open range. Override at configure time once a version is verified:
+#   -DMLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS="0.31.2,0.31.3"
+if(NOT DEFINED MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS OR "${MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS}" STREQUAL "")
+    set(MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS "${MLX_AUDIO_IO_BUILD_MLX_VERSION}")
+endif()
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/python/mlx_audio_io/_build_info.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/_build_info.json"
