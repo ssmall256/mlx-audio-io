@@ -209,6 +209,27 @@ if(NOT DEFINED MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS OR "${MLX_AUDIO_IO_COMPATIBL
     set(MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS "${MLX_AUDIO_IO_BUILD_MLX_VERSION}")
 endif()
 
+# nanobind must match the version MLX itself was built with. The extension
+# shares nanobind's type registry with mlx.core through NB_DOMAIN, so
+# mlx::core::array crosses the boundary using MLX's registered caster. A
+# mismatch compiles and links cleanly and then fails on the first call with
+# "Unable to convert function return value to a Python type" -- an error that
+# says nothing about nanobind. Known pairings: MLX 0.31.x -> nanobind 2.12.0,
+# MLX 0.32.x -> nanobind 2.15.0 (see MLX's own CMakeLists FetchContent GIT_TAG).
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -c "import importlib.metadata as m; print(m.version('nanobind'))"
+    OUTPUT_VARIABLE MLX_AUDIO_IO_NANOBIND_VERSION
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    ERROR_QUIET
+)
+message(STATUS "mlx-audio-io: building against MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} with nanobind ${MLX_AUDIO_IO_NANOBIND_VERSION}")
+if(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.31\\." AND NOT MLX_AUDIO_IO_NANOBIND_VERSION MATCHES "^2\\.12\\.")
+    message(WARNING "MLX 0.31.x expects nanobind 2.12.x, found ${MLX_AUDIO_IO_NANOBIND_VERSION}; array conversion will fail at runtime.")
+endif()
+if(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.32\\." AND NOT MLX_AUDIO_IO_NANOBIND_VERSION MATCHES "^2\\.15\\.")
+    message(WARNING "MLX 0.32.x expects nanobind 2.15.x, found ${MLX_AUDIO_IO_NANOBIND_VERSION}; array conversion will fail at runtime.")
+endif()
+
 configure_file(
     "${CMAKE_SOURCE_DIR}/python/mlx_audio_io/_build_info.json.in"
     "${CMAKE_CURRENT_BINARY_DIR}/_build_info.json"

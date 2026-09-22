@@ -50,6 +50,23 @@ pip install mlx-audio-io
 
 ### Version policy
 
+### MLX and nanobind must be paired
+
+The extension shares nanobind's type registry with `mlx.core` via `NB_DOMAIN`,
+so `mlx::core::array` crosses the boundary using **MLX's own** registered
+caster. Build with a different nanobind than MLX was built with and everything
+compiles and links cleanly, then every call fails at runtime with
+`Unable to convert function return value to a Python type` — an error that
+mentions nothing about nanobind.
+
+| MLX | nanobind |
+|---|---|
+| 0.31.x | 2.12.0 |
+| 0.32.x | 2.15.0 |
+
+(Taken from MLX's own `CMakeLists.txt` `FetchContent ... GIT_TAG`.) The build
+prints the pair it is using and warns on a known-bad combination.
+
 `mlx-audio-io` ships one wheel line per MLX minor version. The native
 extension links `libmlx` directly and shares nanobind's type registry, and MLX
 has no stable C++ ABI — `StreamOrDevice` gained a variant alternative in MLX
