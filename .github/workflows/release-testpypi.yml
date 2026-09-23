@@ -121,20 +121,14 @@ jobs:
 
       - name: Wait for mlx-audio-io on TestPyPI
         run: |
-          python -m pip install --upgrade pip
-          dist_dir="${RUNNER_TEMP}/mlx-audio-io-dist"
-          mkdir -p "${dist_dir}"
+          # Poll the index rather than `pip download`. mlx-audio-io ships an
+          # sdist, and asking pip to download it prepares metadata, which runs
+          # the build backend and compiles the extension -- so the wait itself
+          # would cost a full build and the install would then compile again.
           # Up to 10 minutes: a freshly published file can take minutes to
           # reach every CDN mirror, and macOS runners hit stale ones often.
           for attempt in {1..60}; do
-            if python -m pip download \
-              --no-deps \
-              --no-cache-dir \
-              --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple/ \
-              --no-binary :all: \
-              --dest "${dist_dir}" \
-              "mlx-audio-io==${PACKAGE_VERSION}"; then
+            if curl -fsSL "https://test.pypi.org/simple/mlx-audio-io/" | grep -q "mlx_audio_io-${PACKAGE_VERSION}.tar.gz"; then
               break
             fi
             if [ "${attempt}" -eq 60 ]; then
@@ -144,15 +138,13 @@ jobs:
             sleep 10
           done
 
-      - name: Install the downloaded distribution
+      - name: Install from TestPyPI
         run: |
-          shopt -s nullglob
-          dists=("${RUNNER_TEMP}/mlx-audio-io-dist"/mlx_audio_io-*)
-          if [ "${#dists[@]}" -ne 1 ]; then
-            echo "Expected exactly one mlx-audio-io ${PACKAGE_VERSION} distribution, found ${#dists[@]}" >&2
-            exit 1
-          fi
-          python -m pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${dists[0]}"
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir \
+            --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "mlx-audio-io==${PACKAGE_VERSION}"
 
       - name: Smoke test
         run: |
@@ -180,20 +172,14 @@ jobs:
 
       - name: Wait for mlx-audio-io on TestPyPI
         run: |
-          python -m pip install --upgrade pip
-          dist_dir="${RUNNER_TEMP}/mlx-audio-io-dist"
-          mkdir -p "${dist_dir}"
+          # Poll the index rather than `pip download`. mlx-audio-io ships an
+          # sdist, and asking pip to download it prepares metadata, which runs
+          # the build backend and compiles the extension -- so the wait itself
+          # would cost a full build and the install would then compile again.
           # Up to 10 minutes: a freshly published file can take minutes to
           # reach every CDN mirror, and macOS runners hit stale ones often.
           for attempt in {1..60}; do
-            if python -m pip download \
-              --no-deps \
-              --no-cache-dir \
-              --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple/ \
-              --no-binary :all: \
-              --dest "${dist_dir}" \
-              "mlx-audio-io==${PACKAGE_VERSION}"; then
+            if curl -fsSL "https://test.pypi.org/simple/mlx-audio-io/" | grep -q "mlx_audio_io-${PACKAGE_VERSION}.tar.gz"; then
               break
             fi
             if [ "${attempt}" -eq 60 ]; then
@@ -203,15 +189,13 @@ jobs:
             sleep 10
           done
 
-      - name: Install the downloaded distribution
+      - name: Install from TestPyPI
         run: |
-          shopt -s nullglob
-          dists=("${RUNNER_TEMP}/mlx-audio-io-dist"/mlx_audio_io-*)
-          if [ "${#dists[@]}" -ne 1 ]; then
-            echo "Expected exactly one mlx-audio-io ${PACKAGE_VERSION} distribution, found ${#dists[@]}" >&2
-            exit 1
-          fi
-          python -m pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${dists[0]}"
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir \
+            --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "mlx-audio-io==${PACKAGE_VERSION}"
 
       - name: Smoke test
         run: |
@@ -235,20 +219,14 @@ jobs:
 
       - name: Wait for mlx-audio-io on TestPyPI
         run: |
-          python -m pip install --upgrade pip
-          dist_dir="${RUNNER_TEMP}/mlx-audio-io-dist"
-          mkdir -p "${dist_dir}"
+          # Poll the index rather than `pip download`. mlx-audio-io ships an
+          # sdist, and asking pip to download it prepares metadata, which runs
+          # the build backend and compiles the extension -- so the wait itself
+          # would cost a full build and the install would then compile again.
           # Up to 10 minutes: a freshly published file can take minutes to
           # reach every CDN mirror, and macOS runners hit stale ones often.
           for attempt in {1..60}; do
-            if python -m pip download \
-              --no-deps \
-              --no-cache-dir \
-              --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple/ \
-              --no-binary :all: \
-              --dest "${dist_dir}" \
-              "mlx-audio-io==${PACKAGE_VERSION}"; then
+            if curl -fsSL "https://test.pypi.org/simple/mlx-audio-io/" | grep -q "mlx_audio_io-${PACKAGE_VERSION}.tar.gz"; then
               break
             fi
             if [ "${attempt}" -eq 60 ]; then
@@ -258,15 +236,13 @@ jobs:
             sleep 10
           done
 
-      - name: Install the downloaded distribution
+      - name: Install from TestPyPI
         run: |
-          shopt -s nullglob
-          dists=("${RUNNER_TEMP}/mlx-audio-io-dist"/mlx_audio_io-*)
-          if [ "${#dists[@]}" -ne 1 ]; then
-            echo "Expected exactly one mlx-audio-io ${PACKAGE_VERSION} distribution, found ${#dists[@]}" >&2
-            exit 1
-          fi
-          python -m pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${dists[0]}"
+          python -m pip install --upgrade pip
+          python -m pip install --no-cache-dir \
+            --index-url https://test.pypi.org/simple/ \
+            --extra-index-url https://pypi.org/simple/ \
+            "mlx-audio-io==${PACKAGE_VERSION}"
 
       - name: Smoke test
         run: |
