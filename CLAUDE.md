@@ -45,7 +45,7 @@ Cross-platform native audio I/O for MLX. C++ extension via nanobind — macOS us
 
 ## Build
 
-Requires CMake 3.24+, C++17 toolchain, pkg-config.
+Requires CMake 3.24+, C++20 toolchain, pkg-config.
 
 ```bash
 ./dev build                      # rebuild C++ extension (always recompiles)
@@ -60,7 +60,7 @@ uv sync --extra dev              # first-time setup only
 **macOS extras**: AudioToolbox + Accelerate frameworks (system), optional libsoxr via Homebrew.
 **Linux extras**: libavformat-dev, libavcodec-dev, libavutil-dev, libswresample-dev.
 
-Custom `build_backend.py` handles: Homebrew cmake resolution, delocate/auditwheel wheel repair, MLX version embedding.
+Custom `build_backend.py` handles: Homebrew cmake resolution, delocate/auditwheel wheel repair, and pinning the MLX/nanobind pair for the build (`MLX_AUDIO_IO_BUILD_MLX`). MLX version embedding happens in `CMakeLists.txt`.
 
 ## Tests
 

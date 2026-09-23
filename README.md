@@ -64,34 +64,57 @@ mentions nothing about nanobind.
 | 0.31.x | 2.12.0 |
 | 0.32.x | 2.15.0 |
 
-(Taken from MLX's own `CMakeLists.txt` `FetchContent ... GIT_TAG`.) The build
-prints the pair it is using and warns on a known-bad combination.
+(Taken from MLX's own `CMakeLists.txt` `FetchContent ... GIT_TAG`.) **You do
+not normally have to think about this.** The build backend detects the MLX it
+is building against and pins the matching nanobind itself, and the build fails
+outright on a combination that is known not to work. The build also records
+which nanobind it used, and the loader rejects a mismatched binary at import
+rather than letting it fail on the first call.
 
-`mlx-audio-io` ships one wheel line per MLX minor version. The native
-extension links `libmlx` directly and shares nanobind's type registry, and MLX
-has no stable C++ ABI — `StreamOrDevice` gained a variant alternative in MLX
-0.32.0, which remangles every operation that takes a stream — so a binary built
-against 0.31.x cannot load against 0.32.x.
-
-Each build records the MLX versions it was actually compiled and tested
-against, and the loader rejects anything else at import time rather than
+The native extension links `libmlx` directly, and MLX has no stable C++ ABI —
+`StreamOrDevice` gained a variant alternative in MLX 0.32.0, which remangles
+every operation that takes a stream — so a binary built against 0.31.x cannot
+load against 0.32.x. Each build records the MLX versions it was compiled and
+tested against, and the loader rejects anything else at import time rather than
 crashing later inside a `load()` or `save()`.
 
-For the current release line:
+### Installing: the extension is compiled on your machine
+
+`mlx-audio-io` is published as an **sdist**, not a wheel, so `pip install`
+compiles the extension locally. pip does that inside an isolated build
+environment which it resolves *independently of the environment you are
+installing into* — so if you pin an older MLX, pip may still build against a
+newer one and hand you a binary that cannot load.
+
+If the loader reports a version mismatch, build against your own MLX:
 
 ```bash
-pip install "mlx-audio-io==1.3.11"
+MLX_AUDIO_IO_BUILD_MLX="$(python -c 'import mlx.core as m; print(m.__version__)')" \
+  pip install --force-reinstall --no-cache-dir --no-binary mlx-audio-io mlx-audio-io
 ```
 
-This release requires:
-- macOS: `mlx>=0.31.2,<0.32`
-- Linux: `mlx[cpu]>=0.31.2,<0.32`
+`MLX_AUDIO_IO_BUILD_MLX` crosses the build-isolation boundary, which installed
+package metadata cannot, and the matching nanobind is selected for you.
 
-If you maintain a downstream MLX library, keep your `mlx` range inside the same
-minor as the `mlx-audio-io` wheel you depend on. To try an unverified MLX
-version — for a compatibility investigation, not for production — set
-`MLX_AUDIO_IO_ALLOW_MLX_MISMATCH=1`, which turns the import-time rejection into
-a `RuntimeWarning`. Expect native crashes if the ABI actually differs.
+Current release:
+
+```bash
+pip install "mlx-audio-io==1.3.12"
+```
+
+This release builds and runs against:
+- macOS: `mlx>=0.31.2,<0.33`
+- Linux: `mlx[cpu]>=0.31.2,<0.33`
+
+That range is what this source tree can be built against. Which MLX a *built*
+extension can load is narrower — exactly the version it was compiled with —
+and is enforced by the recorded compatible-version list, which fails loudly and
+names both versions.
+
+To try an unverified MLX version — for a compatibility investigation, not for
+production — set `MLX_AUDIO_IO_ALLOW_MLX_MISMATCH=1`, which turns the
+import-time rejection into a `RuntimeWarning`. Expect native crashes if the ABI
+actually differs.
 
 ### Contributors (source checkout)
 
@@ -144,7 +167,7 @@ Linux source builds require libav and use direct libav-backed paths:
   - CMake 3.24+, C++20 toolchain, `pkg-config`
   - Linux default build: `libavformat-dev`, `libavcodec-dev`, `libavutil-dev`, `libswresample-dev`
 
-### Linux Troubleshooting
+### Troubleshooting
 
 - `ModuleNotFoundError: mlx_audio_io`
   - Install in the project environment (`uv sync`) and run via `uv run ...`.
@@ -160,8 +183,11 @@ Linux source builds require libav and use direct libav-backed paths:
   - Run diagnostics: `python -m mlx_audio_io.doctor`
   - Check MLX runtime compatibility:
     `python -c "import mlx_audio_io as aio; print(aio.show_build_info())"`
-  - If `build_mlx_version` and `runtime_mlx_version` differ, reinstall with matching deps:
-    `pip install -U "mlx==<build_mlx_version>" "mlx-audio-io"`
+  - If `build_mlx_version` and `runtime_mlx_version` differ, rebuild against the
+    MLX you run (see "Installing: the extension is compiled on your machine"):
+    `MLX_AUDIO_IO_BUILD_MLX="<runtime_mlx_version>" pip install --force-reinstall --no-cache-dir --no-binary mlx-audio-io mlx-audio-io`
+  - Moving your runtime instead also works, if nothing else pins it:
+    `pip install -U "mlx==<build_mlx_version>"`
   - Avoid `pip install --no-deps` for `mlx-audio-io` unless you manually pin a matching `mlx` version.
   - Recreate env (do not copy `.venv` between machines):
     `rm -rf .venv && uv venv --python 3.11 && uv sync`

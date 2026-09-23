@@ -5,11 +5,17 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 if(APPLE)
+    # FORCE is load-bearing. scikit-build-core pre-seeds both of these as empty
+    # cache entries, and `set(... CACHE ...)` will not overwrite an entry that
+    # already exists. Without FORCE the guard fires, the set is silently a
+    # no-op, and the value stays empty -- which is how deployment_target came
+    # to be recorded as "" in every build, disabling the runtime macOS
+    # version check that reads it.
     if(NOT CMAKE_OSX_DEPLOYMENT_TARGET)
-        set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target")
+        set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0" CACHE STRING "Minimum macOS deployment target" FORCE)
     endif()
     if(NOT CMAKE_OSX_ARCHITECTURES)
-        set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "macOS architectures")
+        set(CMAKE_OSX_ARCHITECTURES "arm64" CACHE STRING "macOS architectures" FORCE)
     endif()
 endif()
 
@@ -222,12 +228,42 @@ execute_process(
     OUTPUT_STRIP_TRAILING_WHITESPACE
     ERROR_QUIET
 )
-message(STATUS "mlx-audio-io: building against MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} with nanobind ${MLX_AUDIO_IO_NANOBIND_VERSION}")
-if(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.31\\." AND NOT MLX_AUDIO_IO_NANOBIND_VERSION MATCHES "^2\\.12\\.")
-    message(WARNING "MLX 0.31.x expects nanobind 2.12.x, found ${MLX_AUDIO_IO_NANOBIND_VERSION}; array conversion will fail at runtime.")
+if("${MLX_AUDIO_IO_NANOBIND_VERSION}" STREQUAL "")
+    set(MLX_AUDIO_IO_NANOBIND_VERSION "unknown")
 endif()
-if(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.32\\." AND NOT MLX_AUDIO_IO_NANOBIND_VERSION MATCHES "^2\\.15\\.")
-    message(WARNING "MLX 0.32.x expects nanobind 2.15.x, found ${MLX_AUDIO_IO_NANOBIND_VERSION}; array conversion will fail at runtime.")
+message(STATUS "mlx-audio-io: building against MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} with nanobind ${MLX_AUDIO_IO_NANOBIND_VERSION}")
+
+# A mismatch here does not degrade -- it produces a binary that imports and
+# then fails every call. Failing the build is the only signal a user gets,
+# because under `pip install` CMake output is captured and shown on failure
+# only, so message(WARNING) is invisible to exactly the person who needs it.
+set(MLX_AUDIO_IO_NANOBIND_EXPECTED "")
+if(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.31\\.")
+    set(MLX_AUDIO_IO_NANOBIND_EXPECTED "2.12.")
+elseif(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.32\\.")
+    set(MLX_AUDIO_IO_NANOBIND_EXPECTED "2.15.")
+endif()
+if(NOT "${MLX_AUDIO_IO_NANOBIND_EXPECTED}" STREQUAL ""
+   AND NOT MLX_AUDIO_IO_NANOBIND_VERSION MATCHES "^${MLX_AUDIO_IO_NANOBIND_EXPECTED}")
+    if(MLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH)
+        message(WARNING
+            "MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} expects nanobind "
+            "${MLX_AUDIO_IO_NANOBIND_EXPECTED}x, found ${MLX_AUDIO_IO_NANOBIND_VERSION}. "
+            "Continuing because MLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH is set; "
+            "expect every call to fail with 'Unable to convert function return value'.")
+    else()
+        message(FATAL_ERROR
+            "nanobind/MLX mismatch: MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} is built with "
+            "nanobind ${MLX_AUDIO_IO_NANOBIND_EXPECTED}x, but this build environment has "
+            "nanobind ${MLX_AUDIO_IO_NANOBIND_VERSION}.\n"
+            "The extension shares nanobind's type registry with mlx.core through "
+            "NB_DOMAIN, so a mismatch links cleanly and then fails on every call with "
+            "\"Unable to convert function return value to a Python type\".\n"
+            "Fix: pip install \"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED}0\", or let the "
+            "build backend pick it for you (it does this automatically unless you passed "
+            "--no-build-isolation with nanobind already installed).\n"
+            "To build anyway, configure with -DMLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH=ON.")
+    endif()
 endif()
 
 configure_file(

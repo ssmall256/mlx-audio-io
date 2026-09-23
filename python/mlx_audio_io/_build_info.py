@@ -147,6 +147,7 @@ def load_build_info() -> dict[str, Any]:
         "build_os_version": None,
         "deployment_target": None,
         "build_mlx_version": None,
+        "build_nanobind_version": None,
         "compatible_mlx_versions": None,
         "arch": None,
         "python_tag": None,

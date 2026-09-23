@@ -1,10 +1,9 @@
 """Tests for minimp3-based MP3 decode."""
 
-import os
 
 import mlx.core as mx
 import pytest
-from mlx_audio_io import info, load, stream
+from mlx_audio_io import load, stream
 
 pytestmark = pytest.mark.linux_mvp
 

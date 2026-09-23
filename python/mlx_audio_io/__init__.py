@@ -471,7 +471,14 @@ def stream(
         if request_stereo_for_fold:
             return _MonoModeStreamReader(reader, mono_mode=mono_mode)
         return reader
-    except TypeError:
+    except TypeError as exc:
+        # Compatibility fallback for older native modules that lack the
+        # offset/duration keywords. Narrow it: a nanobind type-registry
+        # mismatch also raises TypeError ("Unable to convert function return
+        # value to a Python type"), and retrying with fewer keywords fails the
+        # same way while discarding the informative first traceback.
+        if "convert" in str(exc).lower():
+            raise
         # Compatibility fallback for older native modules.
         reader = core.stream(
             _normalize_path(path),

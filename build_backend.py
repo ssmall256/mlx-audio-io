@@ -15,8 +15,6 @@ from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
-from scikit_build_core import build as _backend
-
 
 def _configure_cmake_executable() -> None:
     if platform.system() != "Darwin":
@@ -32,8 +30,72 @@ def _configure_cmake_executable() -> None:
 
 
 def _call(name: str, *args: Any, **kwargs: Any) -> Any:
+    # Imported lazily so the pure-Python hooks below stay importable without
+    # the build toolchain present -- otherwise the requirement-pairing logic,
+    # which is the part most worth testing, can only be tested where a build
+    # could already run.
+    from scikit_build_core import build as _backend
+
     _configure_cmake_executable()
     return getattr(_backend, name)(*args, **kwargs)
+
+
+# MLX statically links nanobind and registers `mlx::core::array` in a shared
+# NB_DOMAIN type registry. An extension built with a different nanobind compiles
+# and links cleanly, then fails on the first call with "Unable to convert
+# function return value to a Python type" -- an error that never says nanobind.
+# Pairs come from MLX's own CMakeLists FetchContent GIT_TAG.
+_NANOBIND_FOR_MLX = {
+    "0.31": "2.12.0",
+    "0.32": "2.15.0",
+}
+
+_BUILD_MLX_ENV = "MLX_AUDIO_IO_BUILD_MLX"
+
+
+def _mlx_minor(version: str) -> str:
+    parts = version.split(".")
+    return ".".join(parts[:2]) if len(parts) >= 2 else version
+
+
+def _installed_version(distribution: str) -> str | None:
+    try:
+        from importlib import metadata
+
+        return metadata.version(distribution)
+    except Exception:
+        return None
+
+
+def paired_build_requirements() -> list[str]:
+    """Converge the build environment on one MLX and the nanobind it needs.
+
+    pip resolves `mlx` and `nanobind` from `[build-system] requires`
+    independently, in an isolated environment that is also resolved
+    independently of the environment the wheel will be installed into. Two
+    things go wrong there, and both produce a binary that imports fine and
+    fails later:
+
+      * a nanobind MLX was never built with -> TypeError on the first call
+      * an MLX minor the user does not have at runtime -> dlopen symbol error
+
+    A version range cannot express "must equal whatever MLX used", but this
+    hook can: pip installs whatever it returns into that same build
+    environment, so an exact pin here is the one place a backend can fix the
+    combination it was handed. `MLX_AUDIO_IO_BUILD_MLX` crosses the isolation
+    boundary, which installed metadata cannot, so a caller whose runtime MLX is
+    not the newest allowed can still build against it.
+    """
+    extra: list[str] = []
+    requested = os.environ.get(_BUILD_MLX_ENV, "").strip()
+    if requested:
+        extra.append(f"mlx=={requested}")
+    target = requested or _installed_version("mlx")
+    if target:
+        nanobind = _NANOBIND_FOR_MLX.get(_mlx_minor(target))
+        if nanobind:
+            extra.append(f"nanobind=={nanobind}")
+    return extra
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -168,7 +230,7 @@ def build_sdist(
 def get_requires_for_build_wheel(
     config_settings: dict[str, Any] | None = None,
 ) -> list[str]:
-    return _call("get_requires_for_build_wheel", config_settings)
+    return list(_call("get_requires_for_build_wheel", config_settings)) + paired_build_requirements()
 
 
 def get_requires_for_build_sdist(
@@ -195,7 +257,7 @@ def build_editable(
 def get_requires_for_build_editable(
     config_settings: dict[str, Any] | None = None,
 ) -> list[str]:
-    return _call("get_requires_for_build_editable", config_settings)
+    return list(_call("get_requires_for_build_editable", config_settings)) + paired_build_requirements()
 
 
 def prepare_metadata_for_build_editable(

@@ -6,7 +6,6 @@ rejects invalid configurations.
 """
 
 import math
-import os
 import struct
 
 import mlx.core as mx

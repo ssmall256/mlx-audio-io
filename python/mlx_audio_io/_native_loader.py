@@ -22,6 +22,17 @@ _REMEDIATION = (
     "Fix: rm -rf .venv && uv venv --python 3.11 && uv sync"
 )
 
+# mlx-audio-io is published as an sdist, so the extension is compiled on the
+# installing machine against whatever MLX pip resolved into its isolated build
+# environment -- which is not necessarily the MLX the user runs. Telling that
+# user to move their MLX is backwards; the fix is to rebuild against theirs.
+_REBUILD_REMEDIATION = (
+    "Fix: rebuild mlx-audio-io against the MLX you actually run --\n"
+    '  MLX_AUDIO_IO_BUILD_MLX="{version}" pip install --force-reinstall '
+    "--no-cache-dir --no-binary mlx-audio-io mlx-audio-io\n"
+    'Or move your runtime to a version this binary supports: pip install -U "mlx=={build}"'
+)
+
 _LOCK = threading.Lock()
 _CORE_MODULE: Any = None
 _CORE_LOAD_ERROR: RuntimeError | None = None
@@ -332,8 +343,9 @@ def verify_compatibility(native_path: Path, build_info: dict[str, Any] | None = 
                 f"mlx=={build_mlx_version} and is verified against {supported}, but the "
                 f"runtime has mlx=={runtime_mlx_version}.\n"
                 "MLX has no stable C++ ABI, so this can crash in load/save paths.\n"
-                f"Fix: pip install -U \"mlx=={build_mlx_version}\" \"mlx-audio-io\", or "
-                "install an mlx-audio-io build made for your MLX version."
+                + _REBUILD_REMEDIATION.format(
+                    version=runtime_mlx_version, build=build_mlx_version
+                )
             )
             if not _mlx_mismatch_allowed():
                 raise RuntimeError(
@@ -347,11 +359,64 @@ def verify_compatibility(native_path: Path, build_info: dict[str, Any] | None = 
             )
 
 
+# MLX statically links nanobind and registers `mlx::core::array` in a shared
+# NB_DOMAIN registry, so a binary built with a different nanobind converts
+# nothing. It imports fine and fails on the first call with a TypeError that
+# never mentions nanobind, which is why this is worth catching at import.
+_NANOBIND_FOR_MLX = {
+    "0.31": "2.12",
+    "0.32": "2.15",
+}
+
+
+def _version_minor(version: str) -> str:
+    parts = str(version).split(".")
+    return ".".join(parts[:2]) if len(parts) >= 2 else str(version)
+
+
+def verify_nanobind_pairing(build: dict[str, Any]) -> None:
+    """Reject a binary built with a nanobind its MLX was never built with."""
+    built_nanobind = _normalize_optional(build.get("build_nanobind_version"))
+    build_mlx_version = _normalize_optional(build.get("build_mlx_version"))
+    if not built_nanobind or not build_mlx_version:
+        return
+    if str(built_nanobind).lower() == "unknown":
+        return
+    expected = _NANOBIND_FOR_MLX.get(_version_minor(build_mlx_version))
+    if expected is None:
+        return
+    if _version_minor(built_nanobind) == expected:
+        return
+    message = (
+        "nanobind/MLX mismatch: this mlx-audio-io binary was built against "
+        f"mlx=={build_mlx_version} with nanobind=={built_nanobind}, but MLX "
+        f"{_version_minor(build_mlx_version)}.x is built with nanobind "
+        f"{expected}.x.\n"
+        "The extension shares nanobind's type registry with mlx.core through "
+        "NB_DOMAIN, so every call would fail with \"Unable to convert function "
+        "return value to a Python type\" -- an error that says nothing about "
+        "nanobind.\n"
+        "Fix: reinstall so the build picks the matching nanobind --\n"
+        "  pip install --force-reinstall --no-cache-dir --no-binary mlx-audio-io "
+        "mlx-audio-io"
+    )
+    if not _mlx_mismatch_allowed():
+        raise RuntimeError(
+            message + f"\nTo override at your own risk, set {_ALLOW_MISMATCH_ENV}=1."
+        )
+    warnings.warn(
+        message + f"\nContinuing because {_ALLOW_MISMATCH_ENV} is set.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+
+
 def run_preflight_checks(native_path: Path | None = None) -> Path:
     path = resolve_native_path() if native_path is None else native_path
     verify_record_hash(path)
     verify_codesign(path)
     verify_compatibility(path)
+    verify_nanobind_pairing(load_build_info())
     return path
 
 
@@ -381,10 +446,23 @@ def load_native_module() -> Any:
             _CORE_LOAD_ERROR = exc
             raise
         except Exception as exc:  # pragma: no cover - defensive wrapping
+            hint = _REMEDIATION
+            if "symbol not found" in str(exc).lower() or "_ZN3mlx" in str(exc):
+                # An undefined mlx::core symbol is ABI drift, not a stale venv.
+                build = load_build_info()
+                hint = (
+                    "This is an MLX ABI mismatch: the binary references an "
+                    "mlx::core symbol the installed MLX does not export.\n"
+                    + _REBUILD_REMEDIATION.format(
+                        version=_runtime_mlx_version() or "<your mlx version>",
+                        build=_normalize_optional(build.get("build_mlx_version"))
+                        or "<build mlx version>",
+                    )
+                )
             _CORE_LOAD_ERROR = RuntimeError(
                 "Failed to import native extension after preflight checks.\n"
                 f"Original error: {exc}\n"
-                f"{_REMEDIATION}"
+                f"{hint}"
             )
             raise _CORE_LOAD_ERROR from exc
 
