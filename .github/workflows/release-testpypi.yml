@@ -141,10 +141,23 @@ jobs:
       - name: Install from TestPyPI
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir \
-            --index-url https://test.pypi.org/simple/ \
-            --extra-index-url https://pypi.org/simple/ \
-            "mlx-audio-io==${PACKAGE_VERSION}"
+          # The poll above and pip's resolver can read different CDN mirrors,
+          # so clearing the poll does not guarantee pip sees the version yet.
+          # Retry a few times; a resolution failure costs nothing because it
+          # happens before any build starts.
+          for attempt in {1..8}; do
+            if python -m pip install --no-cache-dir \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "mlx-audio-io==${PACKAGE_VERSION}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 8 ]; then
+              echo "mlx-audio-io ${PACKAGE_VERSION} could not be installed from TestPyPI" >&2
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Smoke test
         run: |
@@ -192,10 +205,23 @@ jobs:
       - name: Install from TestPyPI
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir \
-            --index-url https://test.pypi.org/simple/ \
-            --extra-index-url https://pypi.org/simple/ \
-            "mlx-audio-io==${PACKAGE_VERSION}"
+          # The poll above and pip's resolver can read different CDN mirrors,
+          # so clearing the poll does not guarantee pip sees the version yet.
+          # Retry a few times; a resolution failure costs nothing because it
+          # happens before any build starts.
+          for attempt in {1..8}; do
+            if python -m pip install --no-cache-dir \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "mlx-audio-io==${PACKAGE_VERSION}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 8 ]; then
+              echo "mlx-audio-io ${PACKAGE_VERSION} could not be installed from TestPyPI" >&2
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Smoke test
         run: |
@@ -239,10 +265,23 @@ jobs:
       - name: Install from TestPyPI
         run: |
           python -m pip install --upgrade pip
-          python -m pip install --no-cache-dir \
-            --index-url https://test.pypi.org/simple/ \
-            --extra-index-url https://pypi.org/simple/ \
-            "mlx-audio-io==${PACKAGE_VERSION}"
+          # The poll above and pip's resolver can read different CDN mirrors,
+          # so clearing the poll does not guarantee pip sees the version yet.
+          # Retry a few times; a resolution failure costs nothing because it
+          # happens before any build starts.
+          for attempt in {1..8}; do
+            if python -m pip install --no-cache-dir \
+              --index-url https://test.pypi.org/simple/ \
+              --extra-index-url https://pypi.org/simple/ \
+              "mlx-audio-io==${PACKAGE_VERSION}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 8 ]; then
+              echo "mlx-audio-io ${PACKAGE_VERSION} could not be installed from TestPyPI" >&2
+              exit 1
+            fi
+            sleep 15
+          done
 
       - name: Smoke test
         run: |
