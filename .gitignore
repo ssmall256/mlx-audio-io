@@ -29,3 +29,12 @@ tests/assets/
 
 # uv
 uv.lock
+
+# local tooling notes, never committed
+AGENTS.md
+CLAUDE.md
+.claude/
+.codex/
+.cursor/
+.aider*
+claude-reports/
