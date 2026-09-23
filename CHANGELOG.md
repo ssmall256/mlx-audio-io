@@ -13,10 +13,12 @@ so they summarise what shipped rather than what was announced at the time.
   all four suites in the MLX audio stack pass on both 0.31.2 and 0.32.2, and Demucs
   output is bit-identical across them (max abs diff 0.000e+00 on every stem).
   `mlx` widens to `>=0.31.2,<0.33` for build and runtime.
-- `MLX_AUDIO_IO_BUILD_MLX` selects the MLX to build against. It is an environment
-  variable because that is what crosses pip's build-isolation boundary — installed
-  package metadata does not — so it is the only way to tell an sdist install to
-  target the MLX you actually run.
+- `MLX_AUDIO_IO_BUILD_MLX` declares the MLX you intend to build against. The
+  build fails if it is handed a different one, rather than silently producing a
+  binary you cannot load. It cannot change pip's isolated resolution — nothing in
+  a backend can — so to actually build against a specific MLX, install the build
+  dependencies yourself and pass `--no-build-isolation`. The README and the
+  loader's error message both give the exact commands.
 - The build records the nanobind it used (`build_nanobind_version`), and the loader
   rejects a binary whose nanobind does not match its MLX.
 
@@ -29,11 +31,13 @@ so they summarise what shipped rather than what was announced at the time.
   `[build-system] requires` and were resolved independently of each other, so pip
   could hand the build MLX 0.32.x with nanobind 2.12.0. That compiles and links
   cleanly and then fails on every call with `Unable to convert function return
-  value to a Python type` — an error that never mentions nanobind. The build
-  backend now pins the nanobind matching the MLX being built against, through
-  `get_requires_for_build_wheel`, which is the one hook whose return value pip
-  installs into that same environment. A version range cannot express "must equal
-  whatever MLX used"; this can.
+  value to a Python type` — an error that never mentions nanobind. The build now
+  refuses that combination, from `get_requires_for_build_wheel` and again from
+  CMake, naming the error the broken binary would have produced and the commands
+  that fix it. A backend cannot *correct* the pair — pip installs
+  `[build-system] requires` before calling the hook and rejects any conflicting
+  pin it returns — so refusing is the strongest thing available, and it beats
+  shipping a binary that imports and then fails.
 - **`pip install` could produce a binary that cannot load.** Same mechanism, other
   axis: a user pinned to MLX 0.31.2 could get a build environment with 0.32.x and
   a binary that fails `dlopen` with an undefined `mlx::core::astype` symbol. The

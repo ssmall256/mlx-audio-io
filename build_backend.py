@@ -67,35 +67,66 @@ def _installed_version(distribution: str) -> str | None:
         return None
 
 
+def _rebuild_recipe(mlx_version: str, nanobind_version: str) -> str:
+    return (
+        "To build against a specific MLX, install the build dependencies "
+        "yourself and disable build isolation:\n"
+        f'  pip install "mlx=={mlx_version}" "nanobind=={nanobind_version}" '
+        "scikit-build-core delocate\n"
+        "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
+        "--no-binary mlx-audio-io mlx-audio-io"
+    )
+
+
 def paired_build_requirements() -> list[str]:
-    """Converge the build environment on one MLX and the nanobind it needs.
+    """Verify the build environment has an MLX and nanobind that go together.
 
-    pip resolves `mlx` and `nanobind` from `[build-system] requires`
-    independently, in an isolated environment that is also resolved
-    independently of the environment the wheel will be installed into. Two
-    things go wrong there, and both produce a binary that imports fine and
-    fails later:
+    MLX statically links nanobind and registers `mlx::core::array` in a shared
+    NB_DOMAIN registry, so an extension built with a different nanobind
+    compiles and links cleanly and then fails on every call with "Unable to
+    convert function return value to a Python type" -- an error that never
+    mentions nanobind.
 
-      * a nanobind MLX was never built with -> TypeError on the first call
-      * an MLX minor the user does not have at runtime -> dlopen symbol error
-
-    A version range cannot express "must equal whatever MLX used", but this
-    hook can: pip installs whatever it returns into that same build
-    environment, so an exact pin here is the one place a backend can fix the
-    combination it was handed. `MLX_AUDIO_IO_BUILD_MLX` crosses the isolation
-    boundary, which installed metadata cannot, so a caller whose runtime MLX is
-    not the newest allowed can still build against it.
+    This returns no requirements, deliberately. pip installs
+    `[build-system] requires` into the isolated build environment *before*
+    calling this hook, and rejects any exact pin returned here that differs
+    from what it already resolved ("build dependencies conflict with the
+    backend dependencies") -- so a backend cannot correct the combination it
+    was handed. What it can do is refuse to build a binary that is known to be
+    broken, and say how to get the one the caller wanted. Under
+    `--no-build-isolation` this inspects the caller's own environment, which is
+    why that is the route the message recommends.
     """
-    extra: list[str] = []
+    mlx_version = _installed_version("mlx")
+    if not mlx_version:
+        return []
+    expected_nanobind = _NANOBIND_FOR_MLX.get(_mlx_minor(mlx_version))
+
     requested = os.environ.get(_BUILD_MLX_ENV, "").strip()
-    if requested:
-        extra.append(f"mlx=={requested}")
-    target = requested or _installed_version("mlx")
-    if target:
-        nanobind = _NANOBIND_FOR_MLX.get(_mlx_minor(target))
-        if nanobind:
-            extra.append(f"nanobind=={nanobind}")
-    return extra
+    if requested and requested != mlx_version:
+        raise RuntimeError(
+            f"{_BUILD_MLX_ENV}={requested} but the build environment has "
+            f"mlx=={mlx_version}.\n"
+            "pip resolves build dependencies in an isolated environment, "
+            "independently of the environment being installed into, and a "
+            "build backend cannot override that choice.\n"
+            + _rebuild_recipe(requested, _NANOBIND_FOR_MLX.get(
+                _mlx_minor(requested), "2.12.0"))
+        )
+
+    nanobind_version = _installed_version("nanobind")
+    if expected_nanobind and nanobind_version and not nanobind_version.startswith(
+        expected_nanobind.rsplit(".", 1)[0]
+    ):
+        raise RuntimeError(
+            f"nanobind/MLX mismatch in the build environment: mlx=={mlx_version} "
+            f"is built with nanobind {expected_nanobind}, but this environment "
+            f"has nanobind=={nanobind_version}.\n"
+            "Building would succeed and then fail on every call with "
+            '"Unable to convert function return value to a Python type".\n'
+            + _rebuild_recipe(mlx_version, expected_nanobind)
+        )
+    return []
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -230,7 +261,8 @@ def build_sdist(
 def get_requires_for_build_wheel(
     config_settings: dict[str, Any] | None = None,
 ) -> list[str]:
-    return list(_call("get_requires_for_build_wheel", config_settings)) + paired_build_requirements()
+    paired_build_requirements()
+    return _call("get_requires_for_build_wheel", config_settings)
 
 
 def get_requires_for_build_sdist(
@@ -257,7 +289,8 @@ def build_editable(
 def get_requires_for_build_editable(
     config_settings: dict[str, Any] | None = None,
 ) -> list[str]:
-    return list(_call("get_requires_for_build_editable", config_settings)) + paired_build_requirements()
+    paired_build_requirements()
+    return _call("get_requires_for_build_editable", config_settings)
 
 
 def prepare_metadata_for_build_editable(

@@ -26,12 +26,34 @@ _REMEDIATION = (
 # installing machine against whatever MLX pip resolved into its isolated build
 # environment -- which is not necessarily the MLX the user runs. Telling that
 # user to move their MLX is backwards; the fix is to rebuild against theirs.
+# pip resolves build dependencies in an isolated environment, independently of
+# the environment being installed into, and a backend cannot override that --
+# it rejects a conflicting pin outright. Disabling build isolation is the only
+# way to build against a specific MLX, and it means supplying the build
+# dependencies by hand.
+_NANOBIND_FOR_MLX = {
+    "0.31": "2.12.0",
+    "0.32": "2.15.0",
+}
+
 _REBUILD_REMEDIATION = (
     "Fix: rebuild mlx-audio-io against the MLX you actually run --\n"
-    '  MLX_AUDIO_IO_BUILD_MLX="{version}" pip install --force-reinstall '
-    "--no-cache-dir --no-binary mlx-audio-io mlx-audio-io\n"
+    '  pip install "mlx=={version}" "nanobind=={nanobind}" scikit-build-core delocate\n'
+    "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
+    "--no-binary mlx-audio-io mlx-audio-io\n"
     'Or move your runtime to a version this binary supports: pip install -U "mlx=={build}"'
 )
+
+
+def _rebuild_hint(runtime_version: str | None, build_version: str | None) -> str:
+    runtime = runtime_version or "<your mlx version>"
+    parts = str(runtime).split(".")
+    minor = ".".join(parts[:2]) if len(parts) >= 2 else str(runtime)
+    return _REBUILD_REMEDIATION.format(
+        version=runtime,
+        nanobind=_NANOBIND_FOR_MLX.get(minor, "2.12.0"),
+        build=build_version or "<build mlx version>",
+    )
 
 _LOCK = threading.Lock()
 _CORE_MODULE: Any = None
@@ -343,9 +365,7 @@ def verify_compatibility(native_path: Path, build_info: dict[str, Any] | None = 
                 f"mlx=={build_mlx_version} and is verified against {supported}, but the "
                 f"runtime has mlx=={runtime_mlx_version}.\n"
                 "MLX has no stable C++ ABI, so this can crash in load/save paths.\n"
-                + _REBUILD_REMEDIATION.format(
-                    version=runtime_mlx_version, build=build_mlx_version
-                )
+                + _rebuild_hint(runtime_mlx_version, build_mlx_version)
             )
             if not _mlx_mismatch_allowed():
                 raise RuntimeError(
@@ -363,12 +383,6 @@ def verify_compatibility(native_path: Path, build_info: dict[str, Any] | None = 
 # NB_DOMAIN registry, so a binary built with a different nanobind converts
 # nothing. It imports fine and fails on the first call with a TypeError that
 # never mentions nanobind, which is why this is worth catching at import.
-_NANOBIND_FOR_MLX = {
-    "0.31": "2.12",
-    "0.32": "2.15",
-}
-
-
 def _version_minor(version: str) -> str:
     parts = str(version).split(".")
     return ".".join(parts[:2]) if len(parts) >= 2 else str(version)
@@ -382,9 +396,10 @@ def verify_nanobind_pairing(build: dict[str, Any]) -> None:
         return
     if str(built_nanobind).lower() == "unknown":
         return
-    expected = _NANOBIND_FOR_MLX.get(_version_minor(build_mlx_version))
-    if expected is None:
+    expected_full = _NANOBIND_FOR_MLX.get(_version_minor(build_mlx_version))
+    if expected_full is None:
         return
+    expected = _version_minor(expected_full)
     if _version_minor(built_nanobind) == expected:
         return
     message = (
@@ -396,9 +411,11 @@ def verify_nanobind_pairing(build: dict[str, Any]) -> None:
         "NB_DOMAIN, so every call would fail with \"Unable to convert function "
         "return value to a Python type\" -- an error that says nothing about "
         "nanobind.\n"
-        "Fix: reinstall so the build picks the matching nanobind --\n"
-        "  pip install --force-reinstall --no-cache-dir --no-binary mlx-audio-io "
-        "mlx-audio-io"
+        "Fix: rebuild with the matching nanobind --\n"
+        f'  pip install "mlx=={build_mlx_version}" "nanobind=={expected_full}" '
+        "scikit-build-core delocate\n"
+        "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
+        "--no-binary mlx-audio-io mlx-audio-io"
     )
     if not _mlx_mismatch_allowed():
         raise RuntimeError(
@@ -453,10 +470,9 @@ def load_native_module() -> Any:
                 hint = (
                     "This is an MLX ABI mismatch: the binary references an "
                     "mlx::core symbol the installed MLX does not export.\n"
-                    + _REBUILD_REMEDIATION.format(
-                        version=_runtime_mlx_version() or "<your mlx version>",
-                        build=_normalize_optional(build.get("build_mlx_version"))
-                        or "<build mlx version>",
+                    + _rebuild_hint(
+                        _runtime_mlx_version(),
+                        _normalize_optional(build.get("build_mlx_version")),
                     )
                 )
             _CORE_LOAD_ERROR = RuntimeError(

@@ -65,11 +65,11 @@ mentions nothing about nanobind.
 | 0.32.x | 2.15.0 |
 
 (Taken from MLX's own `CMakeLists.txt` `FetchContent ... GIT_TAG`.) **You do
-not normally have to think about this.** The build backend detects the MLX it
-is building against and pins the matching nanobind itself, and the build fails
-outright on a combination that is known not to work. The build also records
-which nanobind it used, and the loader rejects a mismatched binary at import
-rather than letting it fail on the first call.
+not normally have to think about this** — pip resolves both from
+`[build-system] requires` and its default choice is a matching pair. If it ever
+is not, the build refuses rather than producing a binary that imports and then
+fails on every call, and it says how to fix it. The build records which nanobind
+it used, and the loader rejects a mismatched binary at import.
 
 The native extension links `libmlx` directly, and MLX has no stable C++ ABI —
 `StreamOrDevice` gained a variant alternative in MLX 0.32.0, which remangles
@@ -86,15 +86,22 @@ environment which it resolves *independently of the environment you are
 installing into* — so if you pin an older MLX, pip may still build against a
 newer one and hand you a binary that cannot load.
 
-If the loader reports a version mismatch, build against your own MLX:
+If the loader reports a version mismatch, build against your own MLX. A build
+backend cannot override pip's isolated resolution — pip rejects a conflicting
+pin outright — so the only way is to supply the build dependencies yourself and
+turn isolation off:
 
 ```bash
-MLX_AUDIO_IO_BUILD_MLX="$(python -c 'import mlx.core as m; print(m.__version__)')" \
-  pip install --force-reinstall --no-cache-dir --no-binary mlx-audio-io mlx-audio-io
+# nanobind must match your MLX: 0.31.x -> 2.12.0, 0.32.x -> 2.15.0
+pip install "mlx==0.31.2" "nanobind==2.12.0" scikit-build-core delocate
+pip install --force-reinstall --no-cache-dir --no-build-isolation \
+  --no-binary mlx-audio-io mlx-audio-io
 ```
 
-`MLX_AUDIO_IO_BUILD_MLX` crosses the build-isolation boundary, which installed
-package metadata cannot, and the matching nanobind is selected for you.
+(On Linux, swap `delocate` for `auditwheel`.) Set `MLX_AUDIO_IO_BUILD_MLX` to
+the version you intend to build against and the build will refuse if it is
+handed a different one, rather than silently producing a binary you cannot
+load.
 
 Current release:
 
@@ -184,8 +191,8 @@ Linux source builds require libav and use direct libav-backed paths:
   - Check MLX runtime compatibility:
     `python -c "import mlx_audio_io as aio; print(aio.show_build_info())"`
   - If `build_mlx_version` and `runtime_mlx_version` differ, rebuild against the
-    MLX you run (see "Installing: the extension is compiled on your machine"):
-    `MLX_AUDIO_IO_BUILD_MLX="<runtime_mlx_version>" pip install --force-reinstall --no-cache-dir --no-binary mlx-audio-io mlx-audio-io`
+    MLX you run — see "Installing: the extension is compiled on your machine".
+    The error the loader prints contains the exact two commands.
   - Moving your runtime instead also works, if nothing else pins it:
     `pip install -U "mlx==<build_mlx_version>"`
   - Avoid `pip install --no-deps` for `mlx-audio-io` unless you manually pin a matching `mlx` version.

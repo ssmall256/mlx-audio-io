@@ -21,49 +21,90 @@ from mlx_audio_io import _native_loader
 
 
 class TestPairedBuildRequirements:
-    def test_nanobind_is_pinned_to_match_the_target_mlx(self, monkeypatch):
-        monkeypatch.setenv(build_backend._BUILD_MLX_ENV, "0.31.2")
-        assert build_backend.paired_build_requirements() == [
-            "mlx==0.31.2",
-            "nanobind==2.12.0",
-        ]
+    """The hook validates; it deliberately returns nothing.
 
-    def test_a_different_mlx_minor_selects_a_different_nanobind(self, monkeypatch):
-        monkeypatch.setenv(build_backend._BUILD_MLX_ENV, "0.32.2")
-        assert build_backend.paired_build_requirements() == [
-            "mlx==0.32.2",
-            "nanobind==2.15.0",
-        ]
+    pip installs `[build-system] requires` into the isolated build environment
+    before calling the hook, and rejects any exact pin returned from it that
+    differs from what it already resolved ("build dependencies conflict with
+    the backend dependencies"). Verified against a real TestPyPI sdist install.
+    So the backend cannot correct the combination it was handed -- it can only
+    refuse to build a binary that is known to be broken.
+    """
 
-    def test_without_the_env_var_it_pairs_off_the_build_environment(self, monkeypatch):
-        """The common case: pip resolved some MLX, so pin the nanobind for it."""
+    def test_a_consistent_environment_adds_no_requirements(self, monkeypatch):
         monkeypatch.delenv(build_backend._BUILD_MLX_ENV, raising=False)
         monkeypatch.setattr(
-            build_backend, "_installed_version", lambda dist: "0.32.2"
-        )
-        assert build_backend.paired_build_requirements() == ["nanobind==2.15.0"]
-
-    def test_an_unknown_mlx_minor_constrains_nothing(self, monkeypatch):
-        """A future MLX must not be pinned to a nanobind nobody has verified."""
-        monkeypatch.delenv(build_backend._BUILD_MLX_ENV, raising=False)
-        monkeypatch.setattr(
-            build_backend, "_installed_version", lambda dist: "0.99.0"
+            build_backend,
+            "_installed_version",
+            lambda dist: {"mlx": "0.32.2", "nanobind": "2.15.0"}[dist],
         )
         assert build_backend.paired_build_requirements() == []
 
-    def test_no_mlx_at_all_constrains_nothing(self, monkeypatch):
+    def test_a_mismatched_pair_refuses_to_build(self, monkeypatch):
+        monkeypatch.delenv(build_backend._BUILD_MLX_ENV, raising=False)
+        monkeypatch.setattr(
+            build_backend,
+            "_installed_version",
+            lambda dist: {"mlx": "0.32.2", "nanobind": "2.12.0"}[dist],
+        )
+        with pytest.raises(RuntimeError) as excinfo:
+            build_backend.paired_build_requirements()
+        text = str(excinfo.value)
+        assert "nanobind/MLX mismatch" in text
+        # The user will search for the error the broken binary would produce.
+        assert "Unable to convert function return value" in text
+        assert "--no-build-isolation" in text
+
+    def test_the_env_var_refuses_when_it_cannot_be_honoured(self, monkeypatch):
+        """It cannot change pip's isolated resolution, so it must not pretend."""
+        monkeypatch.setenv(build_backend._BUILD_MLX_ENV, "0.31.2")
+        monkeypatch.setattr(
+            build_backend,
+            "_installed_version",
+            lambda dist: {"mlx": "0.32.2", "nanobind": "2.15.0"}[dist],
+        )
+        with pytest.raises(RuntimeError) as excinfo:
+            build_backend.paired_build_requirements()
+        text = str(excinfo.value)
+        assert "0.31.2" in text and "0.32.2" in text
+        assert "--no-build-isolation" in text
+        # The recipe must name the nanobind for the MLX that was asked for.
+        assert "nanobind==2.12.0" in text
+
+    def test_the_env_var_is_satisfied_when_it_already_matches(self, monkeypatch):
+        """The --no-build-isolation case: the caller's env is what gets used."""
+        monkeypatch.setenv(build_backend._BUILD_MLX_ENV, "0.31.2")
+        monkeypatch.setattr(
+            build_backend,
+            "_installed_version",
+            lambda dist: {"mlx": "0.31.2", "nanobind": "2.12.0"}[dist],
+        )
+        assert build_backend.paired_build_requirements() == []
+
+    def test_an_unknown_mlx_minor_is_not_second_guessed(self, monkeypatch):
+        monkeypatch.delenv(build_backend._BUILD_MLX_ENV, raising=False)
+        monkeypatch.setattr(
+            build_backend,
+            "_installed_version",
+            lambda dist: {"mlx": "0.99.0", "nanobind": "2.12.0"}[dist],
+        )
+        assert build_backend.paired_build_requirements() == []
+
+    def test_no_mlx_at_all_is_left_to_the_build_to_report(self, monkeypatch):
         monkeypatch.delenv(build_backend._BUILD_MLX_ENV, raising=False)
         monkeypatch.setattr(build_backend, "_installed_version", lambda dist: None)
         assert build_backend.paired_build_requirements() == []
 
-    def test_the_hook_appends_to_what_the_backend_asks_for(self, monkeypatch):
-        monkeypatch.setenv(build_backend._BUILD_MLX_ENV, "0.31.2")
+    def test_the_hook_runs_the_check_and_returns_the_backend_list(self, monkeypatch):
+        monkeypatch.delenv(build_backend._BUILD_MLX_ENV, raising=False)
+        monkeypatch.setattr(
+            build_backend,
+            "_installed_version",
+            lambda dist: {"mlx": "0.32.2", "nanobind": "2.12.0"}[dist],
+        )
         monkeypatch.setattr(build_backend, "_call", lambda *a, **k: ["cmake"])
-        assert build_backend.get_requires_for_build_wheel() == [
-            "cmake",
-            "mlx==0.31.2",
-            "nanobind==2.12.0",
-        ]
+        with pytest.raises(RuntimeError, match="nanobind/MLX mismatch"):
+            build_backend.get_requires_for_build_wheel()
 
 
 class TestVerifyNanobindPairing:
