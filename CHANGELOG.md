@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## 1.3.17 - 2026-09-23
+
+### Removed
+
+- The `.gitignore` entries added in 1.3.16 named specific editor and assistant
+  tooling. They live in a global ignore file instead, so the repository does not
+  carry them.
+
 ## 1.3.16 - 2026-09-23
 
 ### Removed
