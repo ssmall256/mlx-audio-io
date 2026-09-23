@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## 1.3.13 - 2026-09-23
+
+### Changed
+
+- **The build now fails fast on a known-bad MLX/nanobind pair.** pip resolves
+  `[build-system] requires` in an isolated environment and installs them before
+  a backend hook runs, so a backend cannot substitute a different pair; what it
+  can do is refuse. `get_requires_for_build_wheel` now validates and raises,
+  naming the runtime error a mismatched binary would have produced and the
+  commands that fix it, and CMake fails rather than warning.
+- **To build against a specific MLX**, install the build dependencies yourself
+  and pass `--no-build-isolation`; the README has the exact commands. Verified
+  end to end against a TestPyPI sdist with MLX pinned to 0.31.2.
+- Release workflows set the version from the workflow input before building,
+  wait up to 10 minutes for a new file to reach every CDN mirror, and retry the
+  install. Because this package ships an sdist, the wait polls the index rather
+  than using `pip download`, which would compile the extension once to read
+  metadata and again on install.
+
 ## 1.3.12 - 2026-09-22
 
 ### Added
@@ -56,11 +75,10 @@ so they summarise what shipped rather than what was announced at the time.
   narrower signature. A nanobind registry mismatch also raises `TypeError`, so the
   fallback swallowed it, retried into the same failure, and discarded the
   informative first traceback. Narrowed to the signature case.
-- **`deployment_target` was recorded as `""` in every build**, so the runtime macOS
-  version check that reads it never fired. `CMAKE_OSX_DEPLOYMENT_TARGET` was set
-  without `FORCE`, and scikit-build-core pre-seeds it as an empty cache entry;
-  `set(... CACHE ...)` does not overwrite an existing entry, so the assignment was a
-  silent no-op. Now records `13.0`.
+- `deployment_target` is now recorded in the build metadata (`13.0`), so the
+  runtime macOS version check that reads it is active. It previously recorded
+  an empty string because `CMAKE_OSX_DEPLOYMENT_TARGET` was set without
+  `FORCE` over a cache entry scikit-build-core pre-seeds.
 - `load_build_info()` filtered build metadata through a hardcoded key set and
   silently dropped anything not listed, including the new compatible-version list.
 - Editable checkouts reported every build field as `unknown`, because
