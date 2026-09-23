@@ -119,19 +119,40 @@ jobs:
             build-essential cmake ninja-build pkg-config ffmpeg \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 
-      - name: Install from TestPyPI
+      - name: Wait for mlx-audio-io on TestPyPI
         run: |
           python -m pip install --upgrade pip
-          for i in {1..12}; do
-            python -m pip install \
+          dist_dir="${RUNNER_TEMP}/mlx-audio-io-dist"
+          mkdir -p "${dist_dir}"
+          # Up to 10 minutes: a freshly published file can take minutes to
+          # reach every CDN mirror, and macOS runners hit stale ones often.
+          for attempt in {1..60}; do
+            if python -m pip download \
+              --no-deps \
+              --no-cache-dir \
               --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple \
-              --pre "mlx-audio-io==${PACKAGE_VERSION}" && break
-            if [ "$i" -eq 12 ]; then
+              --extra-index-url https://pypi.org/simple/ \
+              --no-binary :all: \
+              --dest "${dist_dir}" \
+              "mlx-audio-io==${PACKAGE_VERSION}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 60 ]; then
+              echo "mlx-audio-io ${PACKAGE_VERSION} did not reach TestPyPI within 10 minutes" >&2
               exit 1
             fi
             sleep 10
           done
+
+      - name: Install the downloaded distribution
+        run: |
+          shopt -s nullglob
+          dists=("${RUNNER_TEMP}/mlx-audio-io-dist"/mlx_audio_io-*)
+          if [ "${#dists[@]}" -ne 1 ]; then
+            echo "Expected exactly one mlx-audio-io ${PACKAGE_VERSION} distribution, found ${#dists[@]}" >&2
+            exit 1
+          fi
+          python -m pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${dists[0]}"
 
       - name: Smoke test
         run: |
@@ -157,19 +178,40 @@ jobs:
             build-essential cmake ninja-build pkg-config ffmpeg \
             libavformat-dev libavcodec-dev libavutil-dev libswresample-dev
 
-      - name: Install from TestPyPI
+      - name: Wait for mlx-audio-io on TestPyPI
         run: |
           python -m pip install --upgrade pip
-          for i in {1..12}; do
-            python -m pip install \
+          dist_dir="${RUNNER_TEMP}/mlx-audio-io-dist"
+          mkdir -p "${dist_dir}"
+          # Up to 10 minutes: a freshly published file can take minutes to
+          # reach every CDN mirror, and macOS runners hit stale ones often.
+          for attempt in {1..60}; do
+            if python -m pip download \
+              --no-deps \
+              --no-cache-dir \
               --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple \
-              --pre "mlx-audio-io==${PACKAGE_VERSION}" && break
-            if [ "$i" -eq 12 ]; then
+              --extra-index-url https://pypi.org/simple/ \
+              --no-binary :all: \
+              --dest "${dist_dir}" \
+              "mlx-audio-io==${PACKAGE_VERSION}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 60 ]; then
+              echo "mlx-audio-io ${PACKAGE_VERSION} did not reach TestPyPI within 10 minutes" >&2
               exit 1
             fi
             sleep 10
           done
+
+      - name: Install the downloaded distribution
+        run: |
+          shopt -s nullglob
+          dists=("${RUNNER_TEMP}/mlx-audio-io-dist"/mlx_audio_io-*)
+          if [ "${#dists[@]}" -ne 1 ]; then
+            echo "Expected exactly one mlx-audio-io ${PACKAGE_VERSION} distribution, found ${#dists[@]}" >&2
+            exit 1
+          fi
+          python -m pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${dists[0]}"
 
       - name: Smoke test
         run: |
@@ -191,19 +233,40 @@ jobs:
       - name: Install build and runtime dependencies
         run: brew install cmake ninja ffmpeg
 
-      - name: Install from TestPyPI
+      - name: Wait for mlx-audio-io on TestPyPI
         run: |
           python -m pip install --upgrade pip
-          for i in {1..12}; do
-            python -m pip install \
+          dist_dir="${RUNNER_TEMP}/mlx-audio-io-dist"
+          mkdir -p "${dist_dir}"
+          # Up to 10 minutes: a freshly published file can take minutes to
+          # reach every CDN mirror, and macOS runners hit stale ones often.
+          for attempt in {1..60}; do
+            if python -m pip download \
+              --no-deps \
+              --no-cache-dir \
               --index-url https://test.pypi.org/simple/ \
-              --extra-index-url https://pypi.org/simple \
-              --pre "mlx-audio-io==${PACKAGE_VERSION}" && break
-            if [ "$i" -eq 12 ]; then
+              --extra-index-url https://pypi.org/simple/ \
+              --no-binary :all: \
+              --dest "${dist_dir}" \
+              "mlx-audio-io==${PACKAGE_VERSION}"; then
+              break
+            fi
+            if [ "${attempt}" -eq 60 ]; then
+              echo "mlx-audio-io ${PACKAGE_VERSION} did not reach TestPyPI within 10 minutes" >&2
               exit 1
             fi
             sleep 10
           done
+
+      - name: Install the downloaded distribution
+        run: |
+          shopt -s nullglob
+          dists=("${RUNNER_TEMP}/mlx-audio-io-dist"/mlx_audio_io-*)
+          if [ "${#dists[@]}" -ne 1 ]; then
+            echo "Expected exactly one mlx-audio-io ${PACKAGE_VERSION} distribution, found ${#dists[@]}" >&2
+            exit 1
+          fi
+          python -m pip install --no-cache-dir --index-url https://test.pypi.org/simple/ --extra-index-url https://pypi.org/simple/ "${dists[0]}"
 
       - name: Smoke test
         run: |
