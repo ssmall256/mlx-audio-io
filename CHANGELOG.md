@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## 1.3.18 - 2026-09-23
+
+### Fixed
+
+- **The rebuild command printed on an ABI mismatch left out `cmake` and
+  `ninja`.** `--no-build-isolation` means pip installs nothing for the build,
+  and scikit-build-core declares those two dynamically, so turning isolation off
+  skips them. Following the command verbatim on a machine without CMake
+  therefore failed instead of producing a working binary. Reported in
+  ssmall256/mlx-audio-separator#4. The loader message, the CMake error and the
+  README now install them, the README says why, and tests pin all three.
+
 ## 1.3.17 - 2026-09-23
 
 ### Removed

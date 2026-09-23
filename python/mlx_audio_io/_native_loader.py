@@ -38,7 +38,7 @@ _NANOBIND_FOR_MLX = {
 
 _REBUILD_REMEDIATION = (
     "Fix: rebuild mlx-audio-io against the MLX you actually run --\n"
-    '  pip install "mlx=={version}" "nanobind=={nanobind}" scikit-build-core delocate\n'
+    '  pip install "mlx=={version}" "nanobind=={nanobind}" scikit-build-core cmake ninja delocate\n'
     "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
     "--no-binary mlx-audio-io mlx-audio-io\n"
     'Or move your runtime to a version this binary supports: pip install -U "mlx=={build}"'
@@ -413,7 +413,7 @@ def verify_nanobind_pairing(build: dict[str, Any]) -> None:
         "nanobind.\n"
         "Fix: rebuild with the matching nanobind --\n"
         f'  pip install "mlx=={build_mlx_version}" "nanobind=={expected_full}" '
-        "scikit-build-core delocate\n"
+        "scikit-build-core cmake ninja delocate\n"
         "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
         "--no-binary mlx-audio-io mlx-audio-io"
     )

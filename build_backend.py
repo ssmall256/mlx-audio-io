@@ -72,7 +72,7 @@ def _rebuild_recipe(mlx_version: str, nanobind_version: str) -> str:
         "To build against a specific MLX, install the build dependencies "
         "yourself and disable build isolation:\n"
         f'  pip install "mlx=={mlx_version}" "nanobind=={nanobind_version}" '
-        "scikit-build-core delocate\n"
+        "scikit-build-core cmake ninja delocate\n"
         "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
         "--no-binary mlx-audio-io mlx-audio-io"
     )

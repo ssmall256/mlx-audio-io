@@ -159,3 +159,45 @@ def test_build_info_schema_keeps_the_nanobind_field():
     from mlx_audio_io._build_info import load_build_info
 
     assert "build_nanobind_version" in load_build_info()
+
+
+def test_the_rebuild_command_installs_its_own_build_tools():
+    """`--no-build-isolation` means pip installs nothing for the build.
+
+    scikit-build-core declares cmake and ninja dynamically, and turning
+    isolation off skips that declaration -- so the command we print has to name
+    them. A user following it verbatim on a machine without CMake got
+    "No CMAKE_CXX_COMPILER could be found" instead of a working binary
+    (ssmall256/mlx-audio-separator#4).
+    """
+    from mlx_audio_io import _native_loader
+
+    texts = [
+        _native_loader._REBUILD_REMEDIATION,
+        build_backend.paired_build_requirements.__doc__ or "",
+    ]
+    hint = _native_loader._rebuild_hint("0.32.2", "0.31.2")
+    texts.append(hint)
+
+    for name, text in (("_REBUILD_REMEDIATION", texts[0]), ("_rebuild_hint", hint)):
+        assert "--no-build-isolation" in text, name
+        for tool in ("cmake", "ninja"):
+            assert tool in text, f"{name} must tell the user to install {tool}"
+
+
+def test_the_readme_rebuild_recipe_matches():
+    """The README is where most people will find this, so keep it in step."""
+    import pathlib
+
+    readme = pathlib.Path(__file__).resolve().parents[1] / "README.md"
+    if not readme.is_file():          # not shipped in the wheel
+        pytest.skip("README.md is not available in this install")
+    text = readme.read_text()
+    recipe = [
+        line for line in text.splitlines()
+        if "--no-build-isolation" in line or "scikit-build-core" in line
+    ]
+    assert recipe, "README lost its rebuild recipe"
+    joined = "\n".join(recipe)
+    for tool in ("cmake", "ninja"):
+        assert tool in joined, f"README rebuild recipe must install {tool}"

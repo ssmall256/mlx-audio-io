@@ -93,10 +93,15 @@ turn isolation off:
 
 ```bash
 # nanobind must match your MLX: 0.31.x -> 2.12.0, 0.32.x -> 2.15.0
-pip install "mlx==0.31.2" "nanobind==2.12.0" scikit-build-core delocate
+pip install "mlx==0.31.2" "nanobind==2.12.0" scikit-build-core cmake ninja delocate
 pip install --force-reinstall --no-cache-dir --no-build-isolation \
   --no-binary mlx-audio-io mlx-audio-io
 ```
+
+`cmake` and `ninja` are in that list because `--no-build-isolation` means pip
+installs nothing for the build: scikit-build-core normally declares them itself,
+and turning isolation off skips that. The rebuild takes about ten seconds once
+the tooling is present.
 
 (On Linux, swap `delocate` for `auditwheel`.) Set `MLX_AUDIO_IO_BUILD_MLX` to
 the version you intend to build against and the build will refuse if it is
