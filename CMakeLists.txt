@@ -262,6 +262,11 @@ if(NOT "${MLX_AUDIO_IO_NANOBIND_EXPECTED}" STREQUAL ""
             "Fix: pip install \"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED}0\", or let the "
             "build backend pick it for you (it does this automatically unless you passed "
             "--no-build-isolation with nanobind already installed).\n"
+            "The full rebuild recipe, for a build that supplies its own dependencies:\n"
+            "  pip install \"mlx==${MLX_AUDIO_IO_BUILD_MLX_VERSION}\" "
+            "\"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED}0\" scikit-build-core cmake ninja delocate\n"
+            "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
+            "--no-binary mlx-audio-io mlx-audio-io\n"
             "To build anyway, configure with -DMLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH=ON.")
     endif()
 endif()
