@@ -103,13 +103,13 @@ the version you intend to build against and the build will refuse if it is
 handed a different one, rather than silently producing a binary you cannot
 load.
 
-Current release:
+Install:
 
 ```bash
-pip install "mlx-audio-io==1.3.12"
+pip install mlx-audio-io
 ```
 
-This release builds and runs against:
+It builds and runs against:
 - macOS: `mlx>=0.31.2,<0.33`
 - Linux: `mlx[cpu]>=0.31.2,<0.33`
 

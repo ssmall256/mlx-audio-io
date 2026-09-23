@@ -5,6 +5,14 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## 1.3.15 - 2026-09-23
+
+### Fixed
+
+- The README's install example pinned `mlx-audio-io==1.3.12` under a "Current
+  release" heading, so it went stale on every release and PyPI showed an
+  outdated version. It is now unpinned.
+
 ## 1.3.14 - 2026-09-23
 
 ### Fixed
