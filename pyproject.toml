@@ -12,7 +12,7 @@ backend-path = ["."]
 
 [project]
 name = "mlx-audio-io"
-version = "1.3.13"
+version = "1.3.14"
 description = "Native audio I/O for MLX on macOS and Linux"
 readme = "README.md"
 license = "MIT"
@@ -50,6 +50,12 @@ sdist.include = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# tests/test_build_pairing.py imports build_backend, which lives at the repo
+# root rather than in the installed package. Without this it imports only when
+# something else happens to put the root on sys.path -- which stopped being
+# true once the project was installed non-editable, and took CI red with
+# "ModuleNotFoundError: No module named 'build_backend'".
+pythonpath = ["."]
 markers = [
     "apple_only: Requires the macOS AudioToolbox backend",
     "linux_mvp: Covered by Linux backend support matrix",

@@ -5,6 +5,18 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## 1.3.14 - 2026-09-23
+
+### Fixed
+
+- `tests/test_build_pairing.py` imports `build_backend`, which lives at the
+  repository root rather than in the installed package, so it only imported
+  when something else happened to put the root on `sys.path`. That stopped
+  being true once the project was installed non-editable, and every CI job
+  collected with `ModuleNotFoundError: No module named 'build_backend'`.
+  `pythonpath = ["."]` in the pytest configuration fixes it.
+- `uv.lock` refreshed to the released stack.
+
 ## 1.3.13 - 2026-09-23
 
 ### Changed
