@@ -5,6 +5,21 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## 1.3.20 - 2026-09-29
+
+### Fixed
+
+- Source builds now select a verified MLX/nanobind pair. The default isolated
+  build uses MLX 0.32.3 with nanobind 3.0.1; the build hook selects nanobind
+  2.12.0 or 2.15.0 when an older MLX is supplied by the consumer. This fixes
+  `load()` failing to convert its `mlx.core.array` return value after a build
+  against MLX 0.32.3 and nanobind 2.15.0.
+- uv consumers can keep an isolated editable build tied to the MLX version in
+  their own lockfile with `match-runtime`. CI verifies frozen installs and WAV
+  decoding against MLX 0.31.2 and 0.32.3 on Python 3.12.
+- The manual pip rebuild recipe preserves the pinned runtime MLX with
+  `--no-deps`.
+
 ## 1.3.19 - 2026-09-23
 
 ### Changed

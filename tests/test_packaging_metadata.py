@@ -9,7 +9,6 @@ _PYPROJECT = _ROOT / "pyproject.toml"
 _CMAKE = _ROOT / "CMakeLists.txt"
 _DARWIN_MLX = "mlx>=0.31.2,<0.33; platform_system == 'Darwin'"
 _LINUX_MLX = "mlx[cpu]>=0.31.2,<0.33; platform_system == 'Linux'"
-_NANOBIND = "nanobind>=2.12.0,<2.16"
 
 
 def _load_pyproject() -> dict:
@@ -25,14 +24,13 @@ def test_runtime_dependencies_bound_mlx_and_exclude_pytest():
     assert not any(dep.startswith("pytest") for dep in dependencies)
 
 
-def test_build_requires_match_runtime_mlx_pins():
+def test_build_selects_mlx_and_nanobind_after_the_build_hook_runs():
     data = _load_pyproject()
     build_requires = data["build-system"]["requires"]
     runtime_dependencies = data["project"]["dependencies"]
 
-    assert _NANOBIND in build_requires
-    assert _DARWIN_MLX in build_requires
-    assert _LINUX_MLX in build_requires
+    assert not any(dep.startswith("nanobind") for dep in build_requires)
+    assert not any(dep.startswith("mlx") for dep in build_requires)
     assert _DARWIN_MLX in runtime_dependencies
     assert _LINUX_MLX in runtime_dependencies
 
@@ -83,7 +81,7 @@ def test_cmake_declares_compatible_mlx_versions():
     assert "MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS" in cmake
 
 
-def test_nanobind_range_can_match_the_mlx_being_built_against():
+def test_nanobind_is_selected_after_build_mlx_is_installed():
     """nanobind must match the version MLX itself was built with.
 
     The extension shares nanobind's type registry with mlx.core through
@@ -93,20 +91,19 @@ def test_nanobind_range_can_match_the_mlx_being_built_against():
     "Unable to convert function return value to a Python type", even though
     the extension compiled and linked cleanly.
 
-    MLX 0.31.2 builds with nanobind 2.12.0; MLX 0.32.2 moved to 2.15.0
-    (its CMakeLists FetchContent GIT_TAG). The range has to span both for a
-    single source tree to build against either.
+    MLX 0.31.2 builds with nanobind 2.12.0; MLX 0.32.2 uses 2.15.0,
+    and MLX 0.32.3 uses 3.0.1. A static requirement would choose a single
+    latest nanobind for all three.
     """
     data = _load_pyproject()
     build_requires = data["build-system"]["requires"]
-    nb = [dep for dep in build_requires if dep.startswith("nanobind")]
-    assert len(nb) == 1, f"expected exactly one nanobind requirement, got {nb}"
-    spec = nb[0]
-    assert "==" not in spec, (
-        f"nanobind is pinned exactly ({spec}); that forbids building against an "
-        "MLX release that uses a different nanobind"
-    )
-    assert "2.12" in spec and "2.16" in spec, (
-        f"nanobind range {spec} must cover both 2.12.0 (MLX 0.31.x) and "
-        "2.15.0 (MLX 0.32.x)"
-    )
+    assert not any(dep.startswith("nanobind") for dep in build_requires)
+    backend = (_ROOT / "build_backend.py").read_text()
+    assert 'f"nanobind=={expected_nanobind}"' in backend
+
+
+def test_uv_editable_build_matches_locked_runtime_mlx():
+    uv_config = _load_pyproject()["tool"]["uv"]["extra-build-dependencies"]
+    assert uv_config["mlx-audio-io"] == [
+        {"requirement": "mlx[cpu]", "match-runtime": True}
+    ]

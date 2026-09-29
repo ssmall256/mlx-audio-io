@@ -62,14 +62,14 @@ mentions nothing about nanobind.
 | MLX | nanobind |
 |---|---|
 | 0.31.x | 2.12.0 |
-| 0.32.x | 2.15.0 |
+| 0.32.0–0.32.2 | 2.15.0 |
+| 0.32.3 | 3.0.1 |
 
-(Taken from MLX's own `CMakeLists.txt` `FetchContent ... GIT_TAG`.) **You do
-not normally have to think about this** — pip resolves both from
-`[build-system] requires` and its default choice is a matching pair. If it ever
-is not, the build refuses rather than producing a binary that imports and then
-fails on every call, and it says how to fix it. The build records which nanobind
-it used, and the loader rejects a mismatched binary at import.
+(Taken from MLX's own `CMakeLists.txt` `FetchContent ... GIT_TAG`.) The build
+backend selects nanobind after MLX is known. For a regular isolated pip build
+it requests a verified default pair; uv can supply its locked runtime MLX to
+the build environment first. The build records both versions and rejects a
+mismatched pair before compiling.
 
 The native extension links `libmlx` directly, and MLX has no stable C++ ABI —
 `StreamOrDevice` gained a variant alternative in MLX 0.32.0, which remangles
@@ -86,16 +86,34 @@ environment which it resolves *independently of the environment you are
 installing into* — so if you pin an older MLX, pip may still build against a
 newer one and hand you a binary that cannot load.
 
-If the loader reports a version mismatch, build against your own MLX. A build
-backend cannot override pip's isolated resolution — pip rejects a conflicting
-pin outright — so the only way is to supply the build dependencies yourself and
-turn isolation off:
+For uv projects, add this to the **consuming project's** `pyproject.toml` and
+update its lockfile once. `uv sync --frozen` will then build this package using
+the exact MLX version selected for the project, including editable installs:
+
+```toml
+[tool.uv.extra-build-dependencies]
+mlx-audio-io = [{ requirement = "mlx[cpu]", match-runtime = true }]
+```
+
+Run `uv lock` after adding the setting, then use `uv sync --frozen` on each
+machine.
+
+This repository uses the same setting for its own editable build. The build
+hook then supplies the matching nanobind automatically. If MLX is upgraded in
+the lockfile, uv rebuilds the extension for that version. The setting must be
+in each consumer's project configuration; a library cannot impose it on an
+unrelated uv project. The `cpu` extra installs `mlx-cpu` on Linux and has no
+additional dependency on macOS.
+
+For pip, isolated builds still select build MLX independently of runtime MLX.
+If the loader reports a version mismatch, rebuild against your runtime MLX by
+supplying build dependencies and turning isolation off:
 
 ```bash
-# nanobind must match your MLX: 0.31.x -> 2.12.0, 0.32.x -> 2.15.0
-pip install "mlx==0.31.2" "nanobind==2.12.0" scikit-build-core cmake ninja delocate
+# nanobind must match your MLX; MLX 0.32.3 uses nanobind 3.0.1
+pip install "mlx==0.32.3" "nanobind==3.0.1" scikit-build-core cmake ninja delocate
 pip install --force-reinstall --no-cache-dir --no-build-isolation \
-  --no-binary mlx-audio-io mlx-audio-io
+  --no-binary mlx-audio-io --no-deps mlx-audio-io
 ```
 
 `cmake` and `ninja` are in that list because `--no-build-isolation` means pip
@@ -137,6 +155,10 @@ git clone https://github.com/ssmall256/mlx-audio-io.git
 cd mlx-audio-io
 uv sync --extra dev
 ```
+
+To create a standalone sdist or wheel with `uv build`, pass `--no-config`.
+The `match-runtime` setting above applies to environment sync; an artifact
+build has no runtime lock to match.
 
 ### Hard Rule: Do Not Copy `.venv` Between Machines
 
