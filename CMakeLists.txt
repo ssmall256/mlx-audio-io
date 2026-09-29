@@ -221,7 +221,7 @@ endif()
 # mismatch compiles and links cleanly and then fails on the first call with
 # "Unable to convert function return value to a Python type" -- an error that
 # says nothing about nanobind. Known pairings: MLX 0.31.x -> nanobind 2.12.0,
-# MLX 0.32.x -> nanobind 2.15.0 (see MLX's own CMakeLists FetchContent GIT_TAG).
+# MLX 0.32.0-0.32.2 -> 2.15.0, MLX 0.32.3 -> 3.0.1.
 execute_process(
     COMMAND "${Python_EXECUTABLE}" -c "import importlib.metadata as m; print(m.version('nanobind'))"
     OUTPUT_VARIABLE MLX_AUDIO_IO_NANOBIND_VERSION
@@ -238,10 +238,16 @@ message(STATUS "mlx-audio-io: building against MLX ${MLX_AUDIO_IO_BUILD_MLX_VERS
 # because under `pip install` CMake output is captured and shown on failure
 # only, so message(WARNING) is invisible to exactly the person who needs it.
 set(MLX_AUDIO_IO_NANOBIND_EXPECTED "")
-if(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.31\\.")
+if(MLX_AUDIO_IO_BUILD_MLX_VERSION VERSION_EQUAL "0.32.3")
+    set(MLX_AUDIO_IO_NANOBIND_EXPECTED "3.0.")
+    set(MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL "3.0.1")
+elseif(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.31\\.")
     set(MLX_AUDIO_IO_NANOBIND_EXPECTED "2.12.")
-elseif(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.32\\.")
+    set(MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL "2.12.0")
+elseif(MLX_AUDIO_IO_BUILD_MLX_VERSION VERSION_GREATER_EQUAL "0.32.0"
+       AND MLX_AUDIO_IO_BUILD_MLX_VERSION VERSION_LESS "0.32.3")
     set(MLX_AUDIO_IO_NANOBIND_EXPECTED "2.15.")
+    set(MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL "2.15.0")
 endif()
 if(NOT "${MLX_AUDIO_IO_NANOBIND_EXPECTED}" STREQUAL ""
    AND NOT MLX_AUDIO_IO_NANOBIND_VERSION MATCHES "^${MLX_AUDIO_IO_NANOBIND_EXPECTED}")
@@ -259,14 +265,14 @@ if(NOT "${MLX_AUDIO_IO_NANOBIND_EXPECTED}" STREQUAL ""
             "The extension shares nanobind's type registry with mlx.core through "
             "NB_DOMAIN, so a mismatch links cleanly and then fails on every call with "
             "\"Unable to convert function return value to a Python type\".\n"
-            "Fix: pip install \"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED}0\", or let the "
+            "Fix: pip install \"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL}\", or let the "
             "build backend pick it for you (it does this automatically unless you passed "
             "--no-build-isolation with nanobind already installed).\n"
             "The full rebuild recipe, for a build that supplies its own dependencies:\n"
             "  pip install \"mlx==${MLX_AUDIO_IO_BUILD_MLX_VERSION}\" "
-            "\"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED}0\" scikit-build-core cmake ninja delocate\n"
+            "\"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL}\" scikit-build-core cmake ninja delocate\n"
             "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
-            "--no-binary mlx-audio-io mlx-audio-io\n"
+            "--no-binary mlx-audio-io --no-deps mlx-audio-io\n"
             "To build anyway, configure with -DMLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH=ON.")
     endif()
 endif()

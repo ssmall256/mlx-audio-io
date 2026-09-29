@@ -23,35 +23,43 @@ _REMEDIATION = (
 )
 
 # mlx-audio-io is published as an sdist, so the extension is compiled on the
-# installing machine against whatever MLX pip resolved into its isolated build
-# environment -- which is not necessarily the MLX the user runs. Telling that
-# user to move their MLX is backwards; the fix is to rebuild against theirs.
-# pip resolves build dependencies in an isolated environment, independently of
-# the environment being installed into, and a backend cannot override that --
-# it rejects a conflicting pin outright. Disabling build isolation is the only
-# way to build against a specific MLX, and it means supplying the build
-# dependencies by hand.
+# installing machine. pip's isolated default pair can differ from the user's
+# runtime MLX. uv consumers can use extra-build-dependencies with match-runtime
+# to compile against their lock; pip consumers can rebuild without isolation.
 _NANOBIND_FOR_MLX = {
     "0.31": "2.12.0",
-    "0.32": "2.15.0",
+    "0.32.0": "2.15.0",
+    "0.32.1": "2.15.0",
+    "0.32.2": "2.15.0",
+    "0.32.3": "3.0.1",
 }
+
+
+def _expected_nanobind(mlx_version: str) -> str | None:
+    if mlx_version.startswith("0.32."):
+        return _NANOBIND_FOR_MLX.get(mlx_version)
+    return _NANOBIND_FOR_MLX.get(mlx_version) or _NANOBIND_FOR_MLX.get(_version_minor(mlx_version))
 
 _REBUILD_REMEDIATION = (
     "Fix: rebuild mlx-audio-io against the MLX you actually run --\n"
     '  pip install "mlx=={version}" "nanobind=={nanobind}" scikit-build-core cmake ninja delocate\n'
     "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
-    "--no-binary mlx-audio-io mlx-audio-io\n"
+    "--no-binary mlx-audio-io --no-deps mlx-audio-io\n"
     'Or move your runtime to a version this binary supports: pip install -U "mlx=={build}"'
 )
 
 
 def _rebuild_hint(runtime_version: str | None, build_version: str | None) -> str:
     runtime = runtime_version or "<your mlx version>"
-    parts = str(runtime).split(".")
-    minor = ".".join(parts[:2]) if len(parts) >= 2 else str(runtime)
+    nanobind = _expected_nanobind(runtime)
+    if nanobind is None:
+        return (
+            f"No verified nanobind pairing for mlx=={runtime}. Install an "
+            "mlx-audio-io release that supports this MLX version."
+        )
     return _REBUILD_REMEDIATION.format(
         version=runtime,
-        nanobind=_NANOBIND_FOR_MLX.get(minor, "2.12.0"),
+        nanobind=nanobind,
         build=build_version or "<build mlx version>",
     )
 
@@ -396,7 +404,7 @@ def verify_nanobind_pairing(build: dict[str, Any]) -> None:
         return
     if str(built_nanobind).lower() == "unknown":
         return
-    expected_full = _NANOBIND_FOR_MLX.get(_version_minor(build_mlx_version))
+    expected_full = _expected_nanobind(build_mlx_version)
     if expected_full is None:
         return
     expected = _version_minor(expected_full)
@@ -405,7 +413,7 @@ def verify_nanobind_pairing(build: dict[str, Any]) -> None:
     message = (
         "nanobind/MLX mismatch: this mlx-audio-io binary was built against "
         f"mlx=={build_mlx_version} with nanobind=={built_nanobind}, but MLX "
-        f"{_version_minor(build_mlx_version)}.x is built with nanobind "
+        f"{build_mlx_version} is built with nanobind "
         f"{expected}.x.\n"
         "The extension shares nanobind's type registry with mlx.core through "
         "NB_DOMAIN, so every call would fail with \"Unable to convert function "
@@ -415,7 +423,7 @@ def verify_nanobind_pairing(build: dict[str, Any]) -> None:
         f'  pip install "mlx=={build_mlx_version}" "nanobind=={expected_full}" '
         "scikit-build-core cmake ninja delocate\n"
         "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
-        "--no-binary mlx-audio-io mlx-audio-io"
+        "--no-binary mlx-audio-io --no-deps mlx-audio-io"
     )
     if not _mlx_mismatch_allowed():
         raise RuntimeError(
