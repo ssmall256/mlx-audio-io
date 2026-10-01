@@ -5,7 +5,25 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
-## 1.3.20 - 2026-09-29
+## 1.3.20 - 2026-10-01
+
+### Added
+
+- `save(..., layout="auto")` automatically detects whether input tensors are
+  `"channels_first"` [channels, frames] or `"channels_last"` [frames, channels] based
+  on shape heuristics (e.g. channel counts <= 8 with frame counts > 8).
+- `squeeze_mono=True` option in `load()`, `stream()`, and `batch_load()`, squeezing
+  single-channel audio to 1D `(frames,)`.
+- Fast native WAV writer (`src/cpp/wav_writer.h`) with SIMD clamping and streaming
+  direct write support for float32 and pcm16 encodings.
+- Zero-copy buffer transfers between MLX 0.32.3 arrays and native decoders.
+
+### Changed
+
+- On macOS, default resampling when target `sr` is specified now routes through
+  hardware-accelerated Apple AudioToolbox (`resample_quality='best'`), delivering
+  ~4.5x faster resampling with studio-grade SNR (>85 dB). Set
+  `MLX_AUDIO_IO_SOXR_DEFAULT=1` to force libsoxr resampler.
 
 ### Fixed
 

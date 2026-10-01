@@ -267,7 +267,8 @@ save("out.m4a", x, sr, encoding="alac")
 
 ```python
 load(path, sr=None, offset=0.0, duration=None, mono=False, mono_mode="mean",
-     layout="channels_last", dtype="float32", resample_quality="default")
+     layout="channels_last", dtype="float32", resample_quality="default",
+     low_memory=False, squeeze_mono=False)
 ```
 
 Decode audio into an `mlx.core.array`. Returns `(audio, sample_rate)`.
@@ -283,13 +284,16 @@ Decode audio into an `mlx.core.array`. Returns `(audio, sample_rate)`.
 | `layout` | `"channels_last"` | `"channels_last"` `[frames, ch]` or `"channels_first"` `[ch, frames]` |
 | `dtype` | `"float32"` | `"float32"` or `"float16"` |
 | `resample_quality` | `"default"` | `"default"`, `"fastest"`, `"low"`, `"medium"`, `"high"`, `"best"`, `"soxr_hq"`, `"soxr_vhq"`, `"torchaudio_compat"` |
+| `low_memory` | `False` | Bounded-scratch streaming resample for long audio (requires libsoxr) |
+| `squeeze_mono` | `False` | If True, return 1-D `(frames,)` for mono audio instead of `(frames, 1)` |
 
+> On macOS, default resampling when `sr` is specified automatically routes through Apple AudioToolbox (`best`), delivering ~4.5x faster throughput than soxr_vhq with >85 dB SNR. Set `MLX_AUDIO_IO_SOXR_DEFAULT=1` to use libsoxr instead.
 > On Linux WAV/MP3 fast paths, resample quality levels currently map to the same linear behavior.
 > `soxr_hq`/`soxr_vhq` use true libsoxr resampling (when built with libsoxr).
 > If `soxr_hq`/`soxr_vhq` is requested without libsoxr support, `load()`/`resample()` raise `RuntimeError`.
 > `torchaudio_compat` requires `torch` + `torchaudio` and uses `torchaudio.functional.resample`.
 
-When `sr` is specified and `resample_quality` is left at `"default"`, `load()` automatically selects `soxr_vhq` when libsoxr is available, falling back to `"best"` otherwise. You can still override explicitly:
+When `sr` is specified and `resample_quality` is left at `"default"`, `load()` automatically selects `best` on macOS and `soxr_vhq` on Linux when libsoxr is available. You can still override explicitly:
 
 ```python
 audio, sr = load("speech.wav", sr=16000, resample_quality="soxr_hq")
@@ -298,7 +302,7 @@ audio, sr = load("speech.wav", sr=16000, resample_quality="soxr_hq")
 ### `batch_load`
 
 ```python
-batch_load(paths, sr=None, mono=False, mono_mode="mean", dtype="float32", num_workers=4)
+batch_load(paths, sr=None, mono=False, mono_mode="mean", dtype="float32", num_workers=4, squeeze_mono=False)
 ```
 
 Threaded multi-file `load()`. Returns `list[(audio, sample_rate)]`.
@@ -306,7 +310,7 @@ Threaded multi-file `load()`. Returns `list[(audio, sample_rate)]`.
 ### `save`
 
 ```python
-save(path, audio, sr, layout="channels_last", encoding="float32",
+save(path, audio, sr, layout="auto", encoding="float32",
      bitrate="auto", clip=True)
 ```
 
@@ -317,7 +321,7 @@ Write audio from `mx.array` (or `numpy.ndarray`) to disk.
 | `path` | — | Output file path (format inferred from extension) |
 | `audio` | — | Audio data; 1-D input is treated as mono |
 | `sr` | — | Sample rate |
-| `layout` | `"channels_last"` | Layout of the input array |
+| `layout` | `"auto"` | `"auto"` (inferred from shape), `"channels_last"`, or `"channels_first"` |
 | `encoding` | `"float32"` | `"float32"`, `"pcm16"`, or `"alac"` (for `.m4a`) |
 | `bitrate` | `"auto"` | Bitrate for lossy formats (`.m4a` AAC, `.mp3` on Linux) |
 | `clip` | `True` | Clamp samples to `[-1, 1]` before encoding |
