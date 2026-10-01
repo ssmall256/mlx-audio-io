@@ -412,3 +412,56 @@ class TestBatchLoad:
         paths = [pcm16_mono_16k] * 3
         results = batch_load(paths)
         assert len(results) == 3
+
+
+class TestLoadSqueezeMono:
+    def test_default_is_false(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k)
+        assert audio.ndim == 2
+        assert audio.shape == (16000, 1)
+
+    def test_squeeze_mono_true_mono_file(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, squeeze_mono=True)
+        assert audio.ndim == 1
+        assert audio.shape == (16000,)
+
+    def test_squeeze_mono_true_stereo_with_mono_flag(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, mono=True, squeeze_mono=True)
+        assert audio.ndim == 1
+        assert audio.shape == (44100,)
+
+    def test_squeeze_mono_true_channels_first(self, pcm16_mono_16k):
+        audio, sr = load(pcm16_mono_16k, layout="channels_first", squeeze_mono=True)
+        assert audio.ndim == 1
+        assert audio.shape == (16000,)
+
+    def test_squeeze_mono_stereo_not_squeezed(self, pcm16_stereo_44k1):
+        audio, sr = load(pcm16_stereo_44k1, mono=False, squeeze_mono=True)
+        assert audio.ndim == 2
+        assert audio.shape == (44100, 2)
+
+    def test_batch_load_squeeze_mono(self, pcm16_mono_16k):
+        results = batch_load([pcm16_mono_16k, pcm16_mono_16k], squeeze_mono=True)
+        assert len(results) == 2
+        for audio, sr in results:
+            assert audio.ndim == 1
+            assert audio.shape == (16000,)
+
+
+class TestLoadResampleQualityEnv:
+    def test_env_var_override(self, pcm16_stereo_44k1, monkeypatch):
+        monkeypatch.setenv("MLX_AUDIO_IO_RESAMPLE_QUALITY", "fastest")
+        audio, sr = load(pcm16_stereo_44k1, sr=16000)
+        expected, _ = load(pcm16_stereo_44k1, sr=16000, resample_quality="fastest")
+        mx.eval(audio, expected)
+        assert float(mx.max(mx.abs(audio - expected))) == 0.0
+
+    def test_soxr_default_env(self, pcm16_stereo_44k1, monkeypatch):
+        if not _HAS_SOXR_NATIVE:
+            pytest.skip("libsoxr not available")
+        monkeypatch.setenv("MLX_AUDIO_IO_SOXR_DEFAULT", "1")
+        audio, sr = load(pcm16_stereo_44k1, sr=16000)
+        expected, _ = load(pcm16_stereo_44k1, sr=16000, resample_quality="soxr_vhq")
+        mx.eval(audio, expected)
+        assert float(mx.max(mx.abs(audio - expected))) == 0.0
+
