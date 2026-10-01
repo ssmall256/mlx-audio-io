@@ -98,6 +98,114 @@ class TestSaveChannelsFirst:
             os.unlink(path)
 
 
+class TestSaveAutoLayout:
+    def test_auto_channels_first_stereo(self):
+        """Channels-first (2, frames) should be automatically detected with layout='auto'."""
+        sr = 16000
+        frames = sr
+        t = mx.arange(frames) / sr
+        sine1 = mx.sin(2.0 * math.pi * 440.0 * t)
+        sine2 = mx.sin(2.0 * math.pi * 880.0 * t)
+        audio = mx.stack([sine1, sine2], axis=0)  # [2, frames]
+        mx.eval(audio)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            path = f.name
+
+        try:
+            # Default is layout="auto"
+            save(path, audio, sr)
+            meta = info(path)
+            assert meta.channels == 2
+            assert meta.frames == frames
+
+            loaded, loaded_sr = load(path, layout="channels_first")
+            mx.eval(loaded)
+            assert loaded.shape == (2, frames)
+            assert loaded_sr == sr
+            max_diff = mx.max(mx.abs(loaded - audio)).item()
+            assert max_diff < 1e-5
+        finally:
+            os.unlink(path)
+
+    def test_auto_channels_first_mono(self):
+        """Channels-first (1, frames) should be automatically detected with layout='auto'."""
+        sr = 16000
+        frames = sr
+        t = mx.arange(frames) / sr
+        audio = mx.reshape(mx.sin(2.0 * math.pi * 440.0 * t), [1, frames])
+        mx.eval(audio)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            path = f.name
+
+        try:
+            save(path, audio, sr)
+            meta = info(path)
+            assert meta.channels == 1
+            assert meta.frames == frames
+
+            loaded, loaded_sr = load(path, layout="channels_first")
+            mx.eval(loaded)
+            assert loaded.shape == (1, frames)
+            max_diff = mx.max(mx.abs(loaded - audio)).item()
+            assert max_diff < 1e-5
+        finally:
+            os.unlink(path)
+
+    def test_auto_channels_last(self):
+        """Channels-last (frames, 2) should be automatically detected with layout='auto'."""
+        sr = 16000
+        frames = sr
+        t = mx.arange(frames) / sr
+        sine1 = mx.sin(2.0 * math.pi * 440.0 * t)
+        sine2 = mx.sin(2.0 * math.pi * 880.0 * t)
+        audio = mx.stack([sine1, sine2], axis=1)  # [frames, 2]
+        mx.eval(audio)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            path = f.name
+
+        try:
+            save(path, audio, sr)
+            meta = info(path)
+            assert meta.channels == 2
+            assert meta.frames == frames
+
+            loaded, loaded_sr = load(path, layout="channels_last")
+            mx.eval(loaded)
+            assert loaded.shape == (frames, 2)
+            max_diff = mx.max(mx.abs(loaded - audio)).item()
+            assert max_diff < 1e-5
+        finally:
+            os.unlink(path)
+
+    def test_auto_1d(self):
+        """1D audio (frames,) should be saved as mono."""
+        sr = 16000
+        frames = sr
+        t = mx.arange(frames) / sr
+        audio = mx.sin(2.0 * math.pi * 440.0 * t)
+        mx.eval(audio)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            path = f.name
+
+        try:
+            save(path, audio, sr)
+            meta = info(path)
+            assert meta.channels == 1
+            assert meta.frames == frames
+
+            loaded, loaded_sr = load(path)
+            mx.eval(loaded)
+            assert loaded.shape == (frames, 1)
+            max_diff = mx.max(mx.abs(loaded[:, 0] - audio)).item()
+            assert max_diff < 1e-5
+        finally:
+            os.unlink(path)
+
+
 class TestSaveClip:
     def test_clip_true(self):
         sr = 16000

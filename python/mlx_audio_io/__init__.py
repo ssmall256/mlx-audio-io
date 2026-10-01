@@ -32,7 +32,8 @@ _RESAMPLE_QUALITY_TORCHAUDIO = "torchaudio_compat"
 _RESAMPLE_QUALITY_SOXR_VALUES = {"soxr_hq", "soxr_vhq"}
 _LAYOUT_CHANNELS_LAST = "channels_last"
 _LAYOUT_CHANNELS_FIRST = "channels_first"
-_LAYOUT_VALUES = {_LAYOUT_CHANNELS_LAST, _LAYOUT_CHANNELS_FIRST}
+_LAYOUT_AUTO = "auto"
+_LAYOUT_VALUES = {_LAYOUT_CHANNELS_LAST, _LAYOUT_CHANNELS_FIRST, _LAYOUT_AUTO}
 
 
 def _normalize_layout(layout: str) -> str:
@@ -43,6 +44,18 @@ def _normalize_layout(layout: str) -> str:
             f"{sorted(_LAYOUT_VALUES)}, got {layout!r}"
         )
     return value
+
+
+def _detect_save_layout(audio, layout: str) -> str:
+    layout_norm = _normalize_layout(layout)
+    if layout_norm == _LAYOUT_AUTO:
+        if hasattr(audio, "ndim") and audio.ndim == 2:
+            s0 = int(audio.shape[0])
+            s1 = int(audio.shape[1])
+            if s0 <= 8 and s1 > 8:
+                return _LAYOUT_CHANNELS_FIRST
+        return _LAYOUT_CHANNELS_LAST
+    return layout_norm
 
 
 def _get_core_module() -> Any:
@@ -601,14 +614,21 @@ def _maybe_convert_numpy(audio):
     return audio
 
 
-def save(path, audio, sr, layout="channels_last", encoding="float32", bitrate="auto", clip=True):
-    """Save an mlx array (or numpy array) to an audio file."""
+def save(path, audio, sr, layout="auto", encoding="float32", bitrate="auto", clip=True):
+    """Save an mlx array (or numpy array) to an audio file.
+
+    ``layout`` defaults to ``"auto"``, which automatically determines whether
+    the input is ``"channels_last"`` [frames, channels] or ``"channels_first"``
+    [channels, frames] based on shape (e.g. channel counts <= 8 with frames > 8).
+    Can also be explicitly set to ``"channels_last"`` or ``"channels_first"``.
+    """
     audio = _maybe_convert_numpy(audio)
+    resolved_layout = _detect_save_layout(audio, layout)
     return _get_core_module().save(
         _normalize_path(path),
         audio,
         sr,
-        layout=layout,
+        layout=resolved_layout,
         encoding=encoding,
         bitrate=bitrate,
         clip=clip,
