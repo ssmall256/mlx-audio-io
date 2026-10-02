@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
-## 1.3.20 - 2026-10-01
+## 1.3.21 - 2026-10-01
 
 ### Added
 
@@ -24,6 +24,8 @@ so they summarise what shipped rather than what was announced at the time.
   hardware-accelerated Apple AudioToolbox (`resample_quality='best'`), delivering
   ~4.5x faster resampling with studio-grade SNR (>85 dB). Set
   `MLX_AUDIO_IO_SOXR_DEFAULT=1` to force libsoxr resampler.
+
+## 1.3.20 - 2026-09-29
 
 ### Fixed
 
