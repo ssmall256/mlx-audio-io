@@ -5,7 +5,7 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
-## Unreleased
+## 1.3.22 - 2026-10-02
 
 ### Added
 
