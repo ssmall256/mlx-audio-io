@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import os
+import sys
 from typing import Any
 
 import mlx.core as mx
@@ -31,7 +32,8 @@ _RESAMPLE_QUALITY_TORCHAUDIO = "torchaudio_compat"
 _RESAMPLE_QUALITY_SOXR_VALUES = {"soxr_hq", "soxr_vhq"}
 _LAYOUT_CHANNELS_LAST = "channels_last"
 _LAYOUT_CHANNELS_FIRST = "channels_first"
-_LAYOUT_VALUES = {_LAYOUT_CHANNELS_LAST, _LAYOUT_CHANNELS_FIRST}
+_LAYOUT_AUTO = "auto"
+_LAYOUT_VALUES = {_LAYOUT_CHANNELS_LAST, _LAYOUT_CHANNELS_FIRST, _LAYOUT_AUTO}
 
 
 def _normalize_layout(layout: str) -> str:
@@ -42,6 +44,18 @@ def _normalize_layout(layout: str) -> str:
             f"{sorted(_LAYOUT_VALUES)}, got {layout!r}"
         )
     return value
+
+
+def _detect_save_layout(audio, layout: str) -> str:
+    layout_norm = _normalize_layout(layout)
+    if layout_norm == _LAYOUT_AUTO:
+        if hasattr(audio, "ndim") and audio.ndim == 2:
+            s0 = int(audio.shape[0])
+            s1 = int(audio.shape[1])
+            if s0 <= 8 and s1 > 8:
+                return _LAYOUT_CHANNELS_FIRST
+        return _LAYOUT_CHANNELS_LAST
+    return layout_norm
 
 
 def _get_core_module() -> Any:
@@ -108,6 +122,18 @@ _compiled_mixdown_channels_last = mx.compile(_mixdown_channels_last)
 _compiled_mixdown_channels_first = mx.compile(_mixdown_channels_first)
 
 
+def _maybe_squeeze_mono(audio: mx.array, layout: str, squeeze_mono: bool) -> mx.array:
+    if not squeeze_mono or not isinstance(audio, mx.array) or audio.ndim != 2:
+        return audio
+    if layout == _LAYOUT_CHANNELS_FIRST:
+        if int(audio.shape[0]) == 1:
+            return audio.squeeze(0)
+    else:
+        if int(audio.shape[1]) == 1:
+            return audio.squeeze(1)
+    return audio
+
+
 def load(
     path,
     sr=None,
@@ -119,6 +145,7 @@ def load(
     dtype="float32",
     resample_quality="default",
     low_memory=False,
+    squeeze_mono=False,
 ):
     """Load an audio file.
 
@@ -131,15 +158,31 @@ def load(
     the file's native rate. Only the soxr quality modes are supported in this
     path; ``resample_quality`` must be ``'default'``, ``'soxr_hq'``, or
     ``'soxr_vhq'`` when ``low_memory=True``.
+
+    ``squeeze_mono=True`` squeezes the channel dimension if the loaded audio
+    is mono (1 channel), returning a 1D array of shape ``(frames,)`` instead
+    of ``(frames, 1)`` or ``(1, frames)``.
     """
     mono_mode = _normalize_mono_mode(mono_mode)
     resample_quality_norm = _normalize_resample_quality(resample_quality)
     request_stereo_for_fold = bool(mono) and mono_mode == _MONO_MODE_EQUAL_POWER
 
-    # When caller asks for resampling (sr is set) with default quality,
-    # auto-select the best available backend: soxr_vhq > best.
-    if resample_quality_norm == "default" and sr is not None:
-        resample_quality_norm = "soxr_vhq" if supports_soxr() else "best"
+    # When caller asks for resampling (sr is set) with default quality:
+    # On macOS, native Apple AudioToolbox ('best') is hardware-accelerated and ~4.5x
+    # faster than soxr_vhq with studio-grade >85dB SNR.
+    # Set MLX_AUDIO_IO_RESAMPLE_QUALITY or MLX_AUDIO_IO_SOXR_DEFAULT=1 to override.
+    env_quality = os.environ.get("MLX_AUDIO_IO_RESAMPLE_QUALITY")
+    if env_quality:
+        resample_quality_norm = _normalize_resample_quality(env_quality)
+    elif resample_quality_norm == "default" and sr is not None:
+        if low_memory:
+            resample_quality_norm = "soxr_vhq" if supports_soxr() else "best"
+        else:
+            force_soxr = os.environ.get("MLX_AUDIO_IO_SOXR_DEFAULT", "").strip().lower() in {"1", "true", "yes"}
+            if sys.platform != "darwin" or force_soxr:
+                resample_quality_norm = "soxr_vhq" if supports_soxr() else "best"
+            else:
+                resample_quality_norm = "best"
 
     # Streaming (bounded-scratch) fast path. Only takes effect when a target
     # sr is requested that differs from the file's native rate — otherwise the
@@ -173,6 +216,7 @@ def load(
                 audio = _compiled_mixdown_channels_first(audio, mono_mode)
             else:
                 audio = _compiled_mixdown_channels_last(audio, mono_mode)
+        audio = _maybe_squeeze_mono(audio, layout, squeeze_mono)
         return audio, out_sr
 
     use_soxr_resample = (
@@ -224,6 +268,7 @@ def load(
             audio = _compiled_mixdown_channels_first(audio, mono_mode)
         else:
             audio = _compiled_mixdown_channels_last(audio, mono_mode)
+    audio = _maybe_squeeze_mono(audio, layout, squeeze_mono)
     return audio, out_sr
 
 
@@ -440,6 +485,52 @@ class _MonoModeStreamReader:
         return chunk, sr
 
 
+class _SqueezeMonoStreamReader:
+    """Reader shim that squeezes the singleton channel dimension from stream chunks."""
+
+    def __init__(self, base_reader):
+        self._base = base_reader
+        self._sample_rate = int(base_reader.sample_rate)
+        self._chunk_frames = int(base_reader.chunk_frames)
+        self._channels = int(base_reader.channels)
+
+    @property
+    def sample_rate(self):
+        return self._sample_rate
+
+    @property
+    def channels(self):
+        return self._channels
+
+    @property
+    def chunk_frames(self):
+        return self._chunk_frames
+
+    @property
+    def frames_read(self):
+        return self._base.frames_read
+
+    def at_eof(self):
+        return self._base.at_eof()
+
+    def read_chunk(self):
+        chunk, sr = self._base.read_chunk()
+        if self._channels == 1 and isinstance(chunk, mx.array) and chunk.ndim == 2 and int(chunk.shape[1]) == 1:
+            chunk = chunk.squeeze(1)
+        return chunk, sr
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.at_eof():
+            raise StopIteration
+        chunk, sr = self.read_chunk()
+        if chunk.shape[0] == 0:
+            raise StopIteration
+        return chunk, sr
+
+
 def stream(
     path,
     chunk_frames=None,
@@ -450,7 +541,14 @@ def stream(
     dtype="float32",
     offset=0.0,
     duration=None,
+    squeeze_mono=False,
 ):
+    """Stream audio file chunk-by-chunk.
+
+    ``squeeze_mono=True`` squeezes the channel dimension if the streamed audio
+    is mono (1 channel), yielding 1D chunks with shape ``(chunk_frames,)``
+    instead of ``(chunk_frames, 1)``.
+    """
     if (chunk_frames is None) == (chunk_duration is None):
         raise ValueError("Exactly one of chunk_frames or chunk_duration must be specified.")
     mono_mode = _normalize_mono_mode(mono_mode)
@@ -469,7 +567,9 @@ def stream(
             dtype=dtype,
         )
         if request_stereo_for_fold:
-            return _MonoModeStreamReader(reader, mono_mode=mono_mode)
+            reader = _MonoModeStreamReader(reader, mono_mode=mono_mode)
+        if squeeze_mono and reader.channels == 1:
+            reader = _SqueezeMonoStreamReader(reader)
         return reader
     except TypeError as exc:
         # Compatibility fallback for older native modules that lack the
@@ -490,9 +590,11 @@ def stream(
         )
         if request_stereo_for_fold:
             reader = _MonoModeStreamReader(reader, mono_mode=mono_mode)
-        if float(offset) == 0.0 and duration is None:
-            return reader
-        return _WindowedStreamReader(reader, offset_s=offset, duration_s=duration)
+        if float(offset) != 0.0 or duration is not None:
+            reader = _WindowedStreamReader(reader, offset_s=offset, duration_s=duration)
+        if squeeze_mono and reader.channels == 1:
+            reader = _SqueezeMonoStreamReader(reader)
+        return reader
 
 
 def _maybe_convert_numpy(audio):
@@ -504,19 +606,29 @@ def _maybe_convert_numpy(audio):
     if isinstance(audio, np.ndarray):
         import mlx.core as mx
 
-        return mx.array(audio)
+        try:
+            return mx.asarray(audio, copy=False)
+        except (TypeError, ValueError):
+            return mx.array(audio)
 
     return audio
 
 
-def save(path, audio, sr, layout="channels_last", encoding="float32", bitrate="auto", clip=True):
-    """Save an mlx array (or numpy array) to an audio file."""
+def save(path, audio, sr, layout="auto", encoding="float32", bitrate="auto", clip=True):
+    """Save an mlx array (or numpy array) to an audio file.
+
+    ``layout`` defaults to ``"auto"``, which automatically determines whether
+    the input is ``"channels_last"`` [frames, channels] or ``"channels_first"``
+    [channels, frames] based on shape (e.g. channel counts <= 8 with frames > 8).
+    Can also be explicitly set to ``"channels_last"`` or ``"channels_first"``.
+    """
     audio = _maybe_convert_numpy(audio)
+    resolved_layout = _detect_save_layout(audio, layout)
     return _get_core_module().save(
         _normalize_path(path),
         audio,
         sr,
-        layout=layout,
+        layout=resolved_layout,
         encoding=encoding,
         bitrate=bitrate,
         clip=clip,
@@ -528,14 +640,26 @@ def batch_load(
     sr=None,
     mono=False,
     mono_mode="mean",
+    layout="channels_last",
     dtype="float32",
+    resample_quality="default",
+    squeeze_mono=False,
     num_workers=4,
 ):
     """Load multiple audio files in parallel using threads."""
     from concurrent.futures import ThreadPoolExecutor
 
     def _load_one(path):
-        return load(path, sr=sr, mono=mono, mono_mode=mono_mode, dtype=dtype)
+        return load(
+            path,
+            sr=sr,
+            mono=mono,
+            mono_mode=mono_mode,
+            layout=layout,
+            dtype=dtype,
+            resample_quality=resample_quality,
+            squeeze_mono=squeeze_mono,
+        )
 
     with ThreadPoolExecutor(max_workers=num_workers) as pool:
         return list(pool.map(_load_one, list(paths)))

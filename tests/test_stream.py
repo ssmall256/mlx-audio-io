@@ -336,3 +336,49 @@ class TestStreamProgress:
             assert reader.frames_read == 16000
         finally:
             os.unlink(path)
+
+
+class TestStreamSqueezeMono:
+    def test_default_is_false(self):
+        path = _make_test_wav(sr=16000, duration=0.5, channels=1)
+        try:
+            for chunk, sr in stream(path, chunk_frames=4000):
+                mx.eval(chunk)
+                assert chunk.ndim == 2
+                assert chunk.shape == (4000, 1)
+        finally:
+            os.unlink(path)
+
+    def test_squeeze_mono_true(self):
+        path = _make_test_wav(sr=16000, duration=0.5, channels=1)
+        try:
+            reader = stream(path, chunk_frames=4000, squeeze_mono=True)
+            assert reader.channels == 1
+            assert reader.sample_rate == 16000
+            for chunk, sr in reader:
+                mx.eval(chunk)
+                assert chunk.ndim == 1
+                assert chunk.shape == (4000,)
+        finally:
+            os.unlink(path)
+
+    def test_squeeze_mono_stereo_with_mono_true(self):
+        path = _make_test_wav(sr=16000, duration=0.5, channels=2)
+        try:
+            for chunk, sr in stream(path, chunk_frames=4000, mono=True, squeeze_mono=True):
+                mx.eval(chunk)
+                assert chunk.ndim == 1
+                assert chunk.shape == (4000,)
+        finally:
+            os.unlink(path)
+
+    def test_squeeze_mono_stereo_not_squeezed(self):
+        path = _make_test_wav(sr=16000, duration=0.5, channels=2)
+        try:
+            for chunk, sr in stream(path, chunk_frames=4000, mono=False, squeeze_mono=True):
+                mx.eval(chunk)
+                assert chunk.ndim == 2
+                assert chunk.shape == (4000, 2)
+        finally:
+            os.unlink(path)
+

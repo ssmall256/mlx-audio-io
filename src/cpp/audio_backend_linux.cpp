@@ -1,6 +1,7 @@
 #include "audio_backend.h"
 
 #include "internal_utils.h"
+#include "wav_writer.h"
 #include "mp3_decoder.h"
 #include "tensor_utils.h"
 
@@ -1457,119 +1458,6 @@ std::string wav_subtype_from_info(const WavInfo& wav) {
     return "unknown";
 }
 
-void write_u16_le(FILE* f, uint16_t value) {
-    fwrite(&value, sizeof(value), 1, f);
-}
-
-void write_u32_le(FILE* f, uint32_t value) {
-    fwrite(&value, sizeof(value), 1, f);
-}
-
-void write_wav_header(
-    FILE* f,
-    int sr,
-    int channels,
-    int bits_per_sample,
-    bool is_float,
-    uint32_t data_size) {
-    const uint16_t format_tag = is_float ? 3 : 1;
-    const uint16_t block_align =
-        static_cast<uint16_t>(channels * (bits_per_sample / 8));
-    const uint32_t byte_rate =
-        static_cast<uint32_t>(sr) * static_cast<uint32_t>(block_align);
-
-    fwrite("RIFF", 1, 4, f);
-    write_u32_le(f, 36u + data_size);
-    fwrite("WAVE", 1, 4, f);
-
-    fwrite("fmt ", 1, 4, f);
-    write_u32_le(f, 16u);
-    write_u16_le(f, format_tag);
-    write_u16_le(f, static_cast<uint16_t>(channels));
-    write_u32_le(f, static_cast<uint32_t>(sr));
-    write_u32_le(f, byte_rate);
-    write_u16_le(f, block_align);
-    write_u16_le(f, static_cast<uint16_t>(bits_per_sample));
-
-    fwrite("data", 1, 4, f);
-    write_u32_le(f, data_size);
-}
-
-void write_interleaved_wav(
-    const std::string& path,
-    const float* write_data,
-    int frames,
-    int channels,
-    int sr,
-    const std::string& wav_encoding) {
-    std::unique_ptr<FILE, decltype(&fclose)> f(fopen(path.c_str(), "wb"), fclose);
-    if (!f) {
-        throw std::runtime_error("Failed to open output file for writing: " + path);
-    }
-
-    if (wav_encoding == "float32") {
-        uint32_t data_size = static_cast<uint32_t>(
-            static_cast<uint64_t>(frames) * channels * sizeof(float));
-        write_wav_header(f.get(), sr, channels, 32, true, data_size);
-
-        size_t wrote = fwrite(
-            write_data, sizeof(float), static_cast<size_t>(frames) * channels, f.get());
-        size_t expected = static_cast<size_t>(frames) * channels;
-        if (wrote != expected) {
-            throw std::runtime_error("Failed to write float32 WAV payload");
-        }
-        return;
-    }
-
-    if (wav_encoding == "pcm16") {
-        uint32_t data_size = static_cast<uint32_t>(
-            static_cast<uint64_t>(frames) * channels * sizeof(int16_t));
-        write_wav_header(f.get(), sr, channels, 16, false, data_size);
-
-        size_t total = static_cast<size_t>(frames) * channels;
-        std::unique_ptr<int16_t, decltype(&std::free)> pcm(
-            static_cast<int16_t*>(aligned_alloc_64(total * sizeof(int16_t))), std::free);
-
-        for (size_t i = 0; i < total; ++i) {
-            float x = write_data[i];
-            if (x <= -1.0f) {
-                pcm.get()[i] = static_cast<int16_t>(-32768);
-            } else if (x >= 1.0f) {
-                pcm.get()[i] = static_cast<int16_t>(32767);
-            } else {
-                pcm.get()[i] = static_cast<int16_t>(std::lrint(x * 32767.0f));
-            }
-        }
-
-        size_t wrote = fwrite(pcm.get(), sizeof(int16_t), total, f.get());
-        if (wrote != total) {
-            throw std::runtime_error("Failed to write pcm16 WAV payload");
-        }
-    } else {
-        // pcm24
-        uint32_t data_size = static_cast<uint32_t>(
-            static_cast<uint64_t>(frames) * channels * 3);
-        write_wav_header(f.get(), sr, channels, 24, false, data_size);
-
-        size_t total = static_cast<size_t>(frames) * channels;
-        for (size_t i = 0; i < total; ++i) {
-            float x = write_data[i];
-            int32_t s;
-            if (x <= -1.0f) {
-                s = -8388608;
-            } else if (x >= 1.0f) {
-                s = 8388607;
-            } else {
-                s = static_cast<int32_t>(std::lrint(x * 8388607.0f));
-            }
-            uint8_t bytes[3];
-            bytes[0] = static_cast<uint8_t>(s & 0xFF);
-            bytes[1] = static_cast<uint8_t>((s >> 8) & 0xFF);
-            bytes[2] = static_cast<uint8_t>((s >> 16) & 0xFF);
-            fwrite(bytes, 1, 3, f.get());
-        }
-    }
-}
 
 bool is_supported_m4a_bitrate(const std::string& bitrate) {
     return bitrate == "auto" || bitrate == "128k" || bitrate == "192k" ||
@@ -1795,7 +1683,7 @@ void backend_save_audio(
                 "' for .wav on Linux backend. Use 'float32', 'pcm16', or 'pcm24'.");
         }
 
-        write_interleaved_wav(path, write_data, frames, channels, sr, wav_encoding);
+        internal::write_interleaved_wav(path, write_data, frames, channels, sr, wav_encoding);
         return;
     }
 

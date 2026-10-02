@@ -4,6 +4,7 @@
 #include "mp3_encoder.h"
 #include "osstatus.h"
 #include "raii_audio.h"
+#include "wav_writer.h"
 
 #include <Accelerate/Accelerate.h>
 #include <AudioToolbox/AudioToolbox.h>
@@ -1223,6 +1224,17 @@ void backend_save_audio(
     // MP3: use vendored LAME encoder (AudioToolbox has no MP3 encoder)
     if (out_fmt.kind == OutputFormat::MP3) {
         save_mp3_lame(path, write_data, frames, channels, sr, bitrate);
+        return;
+    }
+
+    // WAV fast path: direct binary write (bypasses AudioToolbox ExtAudioFile)
+    if (out_fmt.file_type == kAudioFileWAVEType) {
+        std::string wav_encoding = encoding;
+        if (wav_encoding == "auto") {
+            wav_encoding = "float32";
+        }
+        bool needs_clip = clip && !interleaved;
+        internal::write_interleaved_wav(path, write_data, frames, channels, sr, wav_encoding, needs_clip);
         return;
     }
 
