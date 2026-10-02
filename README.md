@@ -48,103 +48,23 @@ For normal use:
 pip install mlx-audio-io
 ```
 
-### Version policy
+### MLX compatibility
 
-### MLX and nanobind must be paired
+`mlx-audio-io` is published as an sdist, so `pip install` compiles the
+extension locally. Since 1.3.23 the extension does not build against MLX's C++
+headers or link `libmlx`: decoded audio reaches MLX as a DLPack capsule
+(`mx.from_dlpack`), and `save()`/`resample()` read MLX arrays through the
+buffer protocol. The build therefore needs no MLX at all, and one build works
+with any installed MLX from 0.32.0 on (the first release with
+`mx.from_dlpack`):
 
-The extension shares nanobind's type registry with `mlx.core` via `NB_DOMAIN`,
-so `mlx::core::array` crosses the boundary using **MLX's own** registered
-caster. Build with a different nanobind than MLX was built with and everything
-compiles and links cleanly, then every call fails at runtime with
-`Unable to convert function return value to a Python type` — an error that
-mentions nothing about nanobind.
+- macOS: `mlx>=0.32.0`
+- Linux: `mlx[cpu]>=0.32.0`
 
-| MLX | nanobind |
-|---|---|
-| 0.31.x | 2.12.0 |
-| 0.32.0–0.32.2 | 2.15.0 |
-| 0.32.3 | 3.0.1 |
-
-(Taken from MLX's own `CMakeLists.txt` `FetchContent ... GIT_TAG`.) The build
-backend selects nanobind after MLX is known. For a regular isolated pip build
-it requests a verified default pair; uv can supply its locked runtime MLX to
-the build environment first. The build records both versions and rejects a
-mismatched pair before compiling.
-
-The native extension links `libmlx` directly, and MLX has no stable C++ ABI —
-`StreamOrDevice` gained a variant alternative in MLX 0.32.0, which remangles
-every operation that takes a stream — so a binary built against 0.31.x cannot
-load against 0.32.x. Each build records the MLX versions it was compiled and
-tested against, and the loader rejects anything else at import time rather than
-crashing later inside a `load()` or `save()`.
-
-### Installing: the extension is compiled on your machine
-
-`mlx-audio-io` is published as an **sdist**, not a wheel, so `pip install`
-compiles the extension locally. pip does that inside an isolated build
-environment which it resolves *independently of the environment you are
-installing into* — so if you pin an older MLX, pip may still build against a
-newer one and hand you a binary that cannot load.
-
-For uv projects, add this to the **consuming project's** `pyproject.toml` and
-update its lockfile once. `uv sync --frozen` will then build this package using
-the exact MLX version selected for the project, including editable installs:
-
-```toml
-[tool.uv.extra-build-dependencies]
-mlx-audio-io = [{ requirement = "mlx[cpu]", match-runtime = true }]
-```
-
-Run `uv lock` after adding the setting, then use `uv sync --frozen` on each
-machine.
-
-This repository uses the same setting for its own editable build. The build
-hook then supplies the matching nanobind automatically. If MLX is upgraded in
-the lockfile, uv rebuilds the extension for that version. The setting must be
-in each consumer's project configuration; a library cannot impose it on an
-unrelated uv project. The `cpu` extra installs `mlx-cpu` on Linux and has no
-additional dependency on macOS.
-
-For pip, isolated builds still select build MLX independently of runtime MLX.
-If the loader reports a version mismatch, rebuild against your runtime MLX by
-supplying build dependencies and turning isolation off:
-
-```bash
-# nanobind must match your MLX; MLX 0.32.3 uses nanobind 3.0.1
-pip install "mlx==0.32.3" "nanobind==3.0.1" scikit-build-core cmake ninja delocate
-pip install --force-reinstall --no-cache-dir --no-build-isolation \
-  --no-binary mlx-audio-io --no-deps mlx-audio-io
-```
-
-`cmake` and `ninja` are in that list because `--no-build-isolation` means pip
-installs nothing for the build: scikit-build-core normally declares them itself,
-and turning isolation off skips that. The rebuild takes about ten seconds once
-the tooling is present.
-
-(On Linux, swap `delocate` for `auditwheel`.) Set `MLX_AUDIO_IO_BUILD_MLX` to
-the version you intend to build against and the build will refuse if it is
-handed a different one, rather than silently producing a binary you cannot
-load.
-
-Install:
-
-```bash
-pip install mlx-audio-io
-```
-
-It builds and runs against:
-- macOS: `mlx>=0.31.2,<0.33`
-- Linux: `mlx[cpu]>=0.31.2,<0.33`
-
-That range is what this source tree can be built against. Which MLX a *built*
-extension can load is narrower — exactly the version it was compiled with —
-and is enforced by the recorded compatible-version list, which fails loudly and
-names both versions.
-
-To try an unverified MLX version — for a compatibility investigation, not for
-production — set `MLX_AUDIO_IO_ALLOW_MLX_MISMATCH=1`, which turns the
-import-time rejection into a `RuntimeWarning`. Expect native crashes if the ABI
-actually differs.
+Upgrading MLX does not require rebuilding `mlx-audio-io`. Releases up to
+1.3.22 linked `libmlx` and had to be rebuilt for each MLX version; consumers no
+longer need the `[tool.uv.extra-build-dependencies]` `match-runtime` entry
+those releases asked for.
 
 ### Contributors (source checkout)
 
@@ -156,9 +76,7 @@ cd mlx-audio-io
 uv sync --extra dev
 ```
 
-To create a standalone sdist or wheel with `uv build`, pass `--no-config`.
-The `match-runtime` setting above applies to environment sync; an artifact
-build has no runtime lock to match.
+To create a standalone sdist or wheel, use `uv build`.
 
 ### Hard Rule: Do Not Copy `.venv` Between Machines
 

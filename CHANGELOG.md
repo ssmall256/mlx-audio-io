@@ -5,6 +5,20 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## 1.3.23 - 2026-10-02
+
+### Changed
+
+- The native extension no longer builds against MLX's C++ headers or links
+  `libmlx`: decoded audio is handed to MLX as a DLPack capsule
+  (`mx.from_dlpack`), and `save()`/`resample()` read MLX arrays through the
+  buffer protocol, releasing the GIL while they encode. One wheel now works
+  with every MLX release from 0.32.0 on, with no rebuild per MLX version.
+  Output is unchanged (bit-identical WAV/FLAC), and loading a 3:15 WAV is
+  about 15% faster.
+- Requires `mlx>=0.32.0` (the first release with `mx.from_dlpack`), with no
+  upper bound.
+
 ## 1.3.22 - 2026-10-02
 
 ### Added

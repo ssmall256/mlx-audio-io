@@ -7,8 +7,8 @@ from pathlib import Path
 _ROOT = Path(__file__).resolve().parents[1]
 _PYPROJECT = _ROOT / "pyproject.toml"
 _CMAKE = _ROOT / "CMakeLists.txt"
-_DARWIN_MLX = "mlx>=0.20.0; platform_system == 'Darwin'"
-_LINUX_MLX = "mlx[cpu]>=0.20.0; platform_system == 'Linux'"
+_DARWIN_MLX = "mlx>=0.32.0; platform_system == 'Darwin'"
+_LINUX_MLX = "mlx[cpu]>=0.32.0; platform_system == 'Linux'"
 
 
 def _load_pyproject() -> dict:

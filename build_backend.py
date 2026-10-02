@@ -11,7 +11,6 @@ import platform
 import subprocess
 import sys
 import tempfile
-from importlib.util import find_spec
 from pathlib import Path
 from typing import Any
 
@@ -30,131 +29,12 @@ def _configure_cmake_executable() -> None:
 
 
 def _call(name: str, *args: Any, **kwargs: Any) -> Any:
-    # Imported lazily so the pure-Python hooks below stay importable without
-    # the build toolchain present -- otherwise the requirement-pairing logic,
-    # which is the part most worth testing, can only be tested where a build
-    # could already run.
+    # Imported lazily so this module stays importable without the build
+    # toolchain present.
     from scikit_build_core import build as _backend
 
     _configure_cmake_executable()
     return getattr(_backend, name)(*args, **kwargs)
-
-
-# MLX statically links nanobind and registers `mlx::core::array` in a shared
-# NB_DOMAIN type registry. An extension built with a different nanobind compiles
-# and links cleanly, then fails on the first call with "Unable to convert
-# function return value to a Python type" -- an error that never says nanobind.
-# Pairs come from MLX's own CMakeLists FetchContent GIT_TAG.
-_NANOBIND_FOR_MLX = {
-    "0.31": "2.12.0",
-    "0.32.0": "2.15.0",
-    "0.32.1": "2.15.0",
-    "0.32.2": "2.15.0",
-    "0.32.3": "3.0.1",
-}
-
-_BUILD_MLX_ENV = "MLX_AUDIO_IO_BUILD_MLX"
-_DEFAULT_BUILD_MLX = "0.32.3"
-
-
-def _mlx_minor(version: str) -> str:
-    parts = version.split(".")
-    return ".".join(parts[:2]) if len(parts) >= 2 else version
-
-
-def _expected_nanobind(mlx_version: str) -> str | None:
-    if mlx_version.startswith("0.32."):
-        return _NANOBIND_FOR_MLX.get(mlx_version)
-    return _NANOBIND_FOR_MLX.get(mlx_version) or _NANOBIND_FOR_MLX.get(_mlx_minor(mlx_version))
-
-
-def _installed_version(distribution: str) -> str | None:
-    try:
-        from importlib import metadata
-
-        return metadata.version(distribution)
-    except Exception:
-        return None
-
-
-def _rebuild_recipe(mlx_version: str, nanobind_version: str) -> str:
-    return (
-        "To build against a specific MLX, install the build dependencies "
-        "yourself and disable build isolation:\n"
-        f'  pip install "mlx=={mlx_version}" "nanobind=={nanobind_version}" '
-        "scikit-build-core cmake ninja delocate\n"
-        "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
-        "--no-binary mlx-audio-io --no-deps mlx-audio-io"
-    )
-
-
-def paired_build_requirements() -> list[str]:
-    """Verify the build environment has an MLX and nanobind that go together.
-
-    MLX statically links nanobind and registers `mlx::core::array` in a shared
-    NB_DOMAIN registry, so an extension built with a different nanobind
-    compiles and links cleanly and then fails on every call with "Unable to
-    convert function return value to a Python type" -- an error that never
-    mentions nanobind.
-
-    uv can inject the consumer's runtime MLX as an extra build dependency.
-    Otherwise this hook requests a known working MLX/nanobind pair for an
-    isolated build. Under --no-build-isolation it verifies the caller's pair.
-    """
-    mlx_version = _installed_version("mlx")
-    if not mlx_version:
-        requested = os.environ.get(_BUILD_MLX_ENV, "").strip() or _DEFAULT_BUILD_MLX
-        expected_nanobind = _expected_nanobind(requested)
-        if not expected_nanobind:
-            raise RuntimeError(
-                f"No verified nanobind pairing for mlx=={requested}. "
-                "Set MLX_AUDIO_IO_BUILD_MLX to a supported version."
-            )
-        mlx_requirement = "mlx[cpu]" if platform.system() == "Linux" else "mlx"
-        return [f"{mlx_requirement}=={requested}", f"nanobind=={expected_nanobind}"]
-    expected_nanobind = _expected_nanobind(mlx_version)
-    if not expected_nanobind:
-        raise RuntimeError(
-            f"No verified nanobind pairing for mlx=={mlx_version}. "
-            "Refusing to build an extension whose array return binding may fail."
-        )
-
-    requested = os.environ.get(_BUILD_MLX_ENV, "").strip()
-    if requested and requested != mlx_version:
-        raise RuntimeError(
-            f"{_BUILD_MLX_ENV}={requested} but the build environment has "
-            f"mlx=={mlx_version}.\n"
-            "pip resolves build dependencies in an isolated environment, "
-            "independently of the environment being installed into, and a "
-            "build backend cannot override that choice.\n"
-            + _rebuild_recipe(requested, _expected_nanobind(requested) or "2.12.0")
-        )
-
-    nanobind_version = _installed_version("nanobind")
-    if expected_nanobind and not nanobind_version:
-        return [f"nanobind=={expected_nanobind}"]
-    if expected_nanobind and nanobind_version and not nanobind_version.startswith(
-        expected_nanobind.rsplit(".", 1)[0]
-    ):
-        raise RuntimeError(
-            f"nanobind/MLX mismatch in the build environment: mlx=={mlx_version} "
-            f"is built with nanobind {expected_nanobind}, but this environment "
-            f"has nanobind=={nanobind_version}.\n"
-            "Building would succeed and then fail on every call with "
-            '"Unable to convert function return value to a Python type".\n'
-            + _rebuild_recipe(mlx_version, expected_nanobind)
-        )
-    return []
-
-
-def _require_build_pairing() -> None:
-    requirements = paired_build_requirements()
-    if requirements:
-        raise RuntimeError(
-            "Missing build dependencies in the build environment: "
-            f"install {', '.join(requirements)} before building without isolation, "
-            "or enable build isolation so the build hook can install it."
-        )
 
 
 def _env_flag(name: str, default: bool) -> bool:
@@ -163,23 +43,6 @@ def _env_flag(name: str, default: bool) -> bool:
         return default
     val = raw.strip().lower()
     return val not in {"0", "false", "no", "off", ""}
-
-
-def _mlx_library_search_paths() -> list[str]:
-    paths: list[str] = []
-    spec = find_spec("mlx")
-    if spec is None:
-        return paths
-    if spec.submodule_search_locations:
-        for location in spec.submodule_search_locations:
-            lib_dir = Path(location) / "lib"
-            if lib_dir.is_dir():
-                paths.append(str(lib_dir))
-    elif spec.origin:
-        lib_dir = Path(spec.origin).resolve().parent / "lib"
-        if lib_dir.is_dir():
-            paths.append(str(lib_dir))
-    return paths
 
 
 def _repair_macos_wheel(wheel_path: Path, wheel_directory: Path) -> str:
@@ -191,17 +54,9 @@ def _repair_macos_wheel(wheel_path: Path, wheel_directory: Path) -> str:
             "delocate.cmd.delocate_wheel",
             "--wheel-dir",
             tmpdir,
-            "--exclude",
-            "libmlx.dylib",
             str(wheel_path),
         ]
-        env = os.environ.copy()
-        search_paths = _mlx_library_search_paths()
-        if search_paths:
-            fallback = env.get("DYLD_FALLBACK_LIBRARY_PATH", "")
-            merged = search_paths + ([fallback] if fallback else [])
-            env["DYLD_FALLBACK_LIBRARY_PATH"] = ":".join(merged)
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if proc.returncode != 0:
             detail = "\n".join(
                 part for part in (proc.stdout.strip(), proc.stderr.strip()) if part
@@ -263,7 +118,6 @@ def build_wheel(
     config_settings: dict[str, Any] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    _require_build_pairing()
     wheel_name = _call("build_wheel", wheel_directory, config_settings, metadata_directory)
     if not _env_flag("MLX_AUDIO_IO_REPAIR_WHEEL", True):
         return wheel_name
@@ -290,7 +144,7 @@ def build_sdist(
 def get_requires_for_build_wheel(
     config_settings: dict[str, Any] | None = None,
 ) -> list[str]:
-    return paired_build_requirements() + _call("get_requires_for_build_wheel", config_settings)
+    return _call("get_requires_for_build_wheel", config_settings)
 
 
 def get_requires_for_build_sdist(
@@ -311,14 +165,13 @@ def build_editable(
     config_settings: dict[str, Any] | None = None,
     metadata_directory: str | None = None,
 ) -> str:
-    _require_build_pairing()
     return _call("build_editable", wheel_directory, config_settings, metadata_directory)
 
 
 def get_requires_for_build_editable(
     config_settings: dict[str, Any] | None = None,
 ) -> list[str]:
-    return paired_build_requirements() + _call("get_requires_for_build_editable", config_settings)
+    return _call("get_requires_for_build_editable", config_settings)
 
 
 def prepare_metadata_for_build_editable(

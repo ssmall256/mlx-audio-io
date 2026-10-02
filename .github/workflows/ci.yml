@@ -98,8 +98,8 @@ jobs:
       - name: Run full test suite
         run: uv run pytest -q
 
-      - name: Verify locked editable builds at both MLX versions
-        run: python tools/check_uv_locked_pairing.py
+      - name: Verify one build works across MLX runtimes
+        run: python tools/check_mlx_runtime_matrix.py
 
   packaging:
     name: Packaging (sdist + wheel metadata)
