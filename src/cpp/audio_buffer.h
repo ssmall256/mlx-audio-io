@@ -9,7 +9,7 @@
 #include <utility>
 
 #include "dlpack/dlpack.h"
-#include "internal_utils.h"
+#include "aligned_alloc.h"
 
 namespace mlx_audio {
 

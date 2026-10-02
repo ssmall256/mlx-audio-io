@@ -943,7 +943,7 @@ AudioStreamReader::AudioStreamReader(AudioStreamReader&& other) noexcept
     other.wav_format_tag_ = 0;
     other.wav_total_frames_ = 0;
     other.is_predecoded_ = false;
-    other.predecoded_audio_.reset();
+    other.predecoded_audio_ = AudioBuffer();
     other.predecoded_data_ = nullptr;
     other.predecoded_total_frames_ = 0;
     other.is_libav_stream_ = false;
@@ -1008,7 +1008,7 @@ AudioStreamReader& AudioStreamReader::operator=(AudioStreamReader&& other) noexc
     other.wav_format_tag_ = 0;
     other.wav_total_frames_ = 0;
     other.is_predecoded_ = false;
-    other.predecoded_audio_.reset();
+    other.predecoded_audio_ = AudioBuffer();
     other.predecoded_data_ = nullptr;
     other.predecoded_total_frames_ = 0;
     other.is_libav_stream_ = false;

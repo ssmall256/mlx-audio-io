@@ -1827,7 +1827,7 @@ AudioBuffer backend_resample_audio(
             if (total_bytes > 0) std::memcpy(out_buf, in_data, total_bytes);
         } else {
             for (int c = 0; c < channels; ++c) {
-                strided_copy(in_data + c * stride_chan, stride_frame, out_buf + c, channels, static_cast<int>(in_frames));
+                internal::strided_copy(in_data + c * stride_chan, stride_frame, out_buf + c, channels, static_cast<int>(in_frames));
             }
         }
         auto storage = std::make_shared<AudioStorage>(out_buf, total_bytes, true);
@@ -1840,7 +1840,7 @@ AudioBuffer backend_resample_audio(
         size_t in_bytes = static_cast<size_t>(in_frames) * channels * sizeof(float);
         interleaved.reset(static_cast<float*>(aligned_alloc_64(in_bytes)));
         for (int c = 0; c < channels; ++c) {
-            strided_copy(in_data + c * stride_chan, stride_frame, interleaved.get() + c, channels, static_cast<int>(in_frames));
+            internal::strided_copy(in_data + c * stride_chan, stride_frame, interleaved.get() + c, channels, static_cast<int>(in_frames));
         }
         in_buf_linear = interleaved.get();
     }
