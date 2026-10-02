@@ -8,7 +8,7 @@ AudioFileInfo get_info(const std::string& path) {
     return backend_get_info(path);
 }
 
-std::pair<mlx::core::array, int> load_audio(
+std::pair<AudioBuffer, int> load_audio(
     const std::string& path,
     std::optional<int> sr,
     double offset,
@@ -22,7 +22,11 @@ std::pair<mlx::core::array, int> load_audio(
 
 void save_audio(
     const std::string& path,
-    mlx::core::array audio,
+    const float* data,
+    int64_t frames,
+    int channels,
+    int64_t stride_frame,
+    int64_t stride_chan,
     int sr,
     const std::string& layout,
     const std::string& encoding,
@@ -33,15 +37,21 @@ void save_audio(
         throw value_error(
             "flac_compression must be 'default' or 'fast', got '" + flac_compression + "'");
     }
-    backend_save_audio(path, std::move(audio), sr, layout, encoding, bitrate, clip, flac_compression);
+    backend_save_audio(path, data, frames, channels, stride_frame, stride_chan,
+                       sr, layout, encoding, bitrate, clip, flac_compression);
 }
 
-mlx::core::array resample_audio(
-    mlx::core::array audio,
+AudioBuffer resample_audio(
+    const float* in_data,
+    int64_t in_frames,
+    int channels,
+    int64_t stride_frame,
+    int64_t stride_chan,
     int in_sr,
     int out_sr,
     const std::string& quality) {
-    return backend_resample_audio(std::move(audio), in_sr, out_sr, quality);
+    return backend_resample_audio(in_data, in_frames, channels, stride_frame, stride_chan,
+                                  in_sr, out_sr, quality);
 }
 
 }  // namespace mlx_audio

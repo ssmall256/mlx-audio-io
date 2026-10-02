@@ -29,27 +29,8 @@ inline void* aligned_alloc_64(size_t bytes) {
     return ptr;
 }
 
-/// Free function suitable for mlx::core::array deleter.
-inline void aligned_free(void* ptr) { std::free(ptr); }
-
-/// Evaluate a 2-D array so its memory can be read linearly through data<>().
-///
-/// data<>() exposes the raw buffer and ignores strides, so a transposed view
-/// (`.T`, swapaxes) or a strided zero-copy DLPack import must not be read as
-/// if it were row-major. Row- and column-contiguous memory is kept as-is
-/// (no copy); anything else is copied to row-major. Returns true when the
-/// evaluated memory is column-major, i.e. laid out as the transpose of the
-/// logical [rows, cols] shape.
-inline bool materialize_for_linear_read(mlx::core::array& audio) {
-    audio = mlx::core::contiguous(audio, /*allow_col_major=*/true);
-    mlx::core::eval(audio);
-    return !audio.flags().row_contiguous;
-}
-
-/// Evaluate an array as row-major memory, copying only if necessary.
-inline void materialize_row_major(mlx::core::array& audio) {
-    audio = mlx::core::contiguous(audio);
-    mlx::core::eval(audio);
+inline void aligned_free(void* ptr) {
+    std::free(ptr);
 }
 
 /// Strided float copy using cblas_scopy.
@@ -86,7 +67,7 @@ inline ScopedCFURL make_url(const std::string& path) {
 inline void check_file_exists(const std::string& path) {
     struct stat st;
     if (stat(path.c_str(), &st) != 0) {
-        throw file_not_found_error("File not found: " + path);
+        throw mlx_audio::file_not_found_error("File not found: " + path);
     }
 }
 

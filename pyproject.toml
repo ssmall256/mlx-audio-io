@@ -1,6 +1,7 @@
 [build-system]
 requires = [
     "scikit-build-core>=0.10",
+    "nanobind>=2.0.0",
     "delocate>=0.11; platform_system == 'Darwin'",
     "auditwheel>=6.2; platform_system == 'Linux'",
 ]
@@ -15,14 +16,9 @@ readme = "README.md"
 license = "MIT"
 requires-python = ">=3.10"
 dependencies = [
-    "mlx>=0.31.2,<0.33; platform_system == 'Darwin'",
-    "mlx[cpu]>=0.31.2,<0.33; platform_system == 'Linux'",
+    "mlx>=0.20.0; platform_system == 'Darwin'",
+    "mlx[cpu]>=0.20.0; platform_system == 'Linux'",
 ]
-
-# Keep this project's editable build tied to the MLX selected by uv.lock.
-# Downstream uv projects need the same entry in their own pyproject.toml.
-[tool.uv.extra-build-dependencies]
-mlx-audio-io = [{ requirement = "mlx[cpu]", match-runtime = true }]
 
 [project.urls]
 Repository = "https://github.com/ssmall256/mlx-audio-io"

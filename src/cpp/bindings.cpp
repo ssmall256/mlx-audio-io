@@ -3,9 +3,14 @@
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/string.h>
 
+#include <cstring>
+
 #include "audio_backend.h"
+#include "audio_buffer.h"
 #include "audio_io.h"
 #include "audio_stream.h"
+#include "mp3_decoder.h"
+#include "dlpack/dlpack.h"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -28,6 +33,64 @@ NB_MODULE(_core, m) {
             PyErr_SetString(PyExc_ValueError, e.what());
         }
     });
+
+    // AudioBuffer class
+    nb::class_<mlx_audio::AudioBuffer>(m, "AudioBuffer")
+        .def_prop_ro("ndim", [](const mlx_audio::AudioBuffer& b) { return b.ndim; })
+        .def_prop_ro("shape", [](const mlx_audio::AudioBuffer& b) {
+            if (b.ndim == 1) {
+                return nb::make_tuple(b.shape[0]);
+            }
+            return nb::make_tuple(b.shape[0], b.shape[1]);
+        })
+        .def_prop_ro("dtype", [](const mlx_audio::AudioBuffer& b) { return b.dtype; })
+        .def("__dlpack_device__", [](const mlx_audio::AudioBuffer&) {
+            return nb::make_tuple(1, 0); // (kDLCPU, 0)
+        })
+        .def("__dlpack__", [](const mlx_audio::AudioBuffer& self, nb::args, nb::kwargs) {
+            auto* ctx = new mlx_audio::DLPackContext();
+            ctx->storage = self.storage;
+            ctx->shape[0] = self.shape[0];
+            ctx->shape[1] = self.shape[1];
+            ctx->strides[0] = self.strides[0];
+            ctx->strides[1] = self.strides[1];
+
+            auto* managed = new DLManagedTensor();
+            managed->manager_ctx = ctx;
+            managed->dl_tensor.data = const_cast<void*>(self.data());
+            managed->dl_tensor.device = DLDevice{kDLCPU, 0};
+            managed->dl_tensor.ndim = self.ndim;
+            managed->dl_tensor.dtype = (self.dtype == "float16")
+                ? DLDataType{kDLFloat, 16, 1}
+                : DLDataType{kDLFloat, 32, 1};
+            managed->dl_tensor.shape = ctx->shape;
+            managed->dl_tensor.strides = ctx->strides;
+            managed->dl_tensor.byte_offset = 0;
+
+            managed->deleter = [](DLManagedTensor* self_tensor) {
+                if (!self_tensor) return;
+                auto* ctx_ptr = static_cast<mlx_audio::DLPackContext*>(self_tensor->manager_ctx);
+                delete ctx_ptr;
+                delete self_tensor;
+            };
+
+            auto capsule_destructor = [](PyObject* cap) {
+                const char* name = PyCapsule_GetName(cap);
+                if (name && std::strcmp(name, "dltensor") == 0) {
+                    auto* dlm = static_cast<DLManagedTensor*>(PyCapsule_GetPointer(cap, "dltensor"));
+                    if (dlm && dlm->deleter) {
+                        dlm->deleter(dlm);
+                    }
+                }
+            };
+
+            PyObject* cap = PyCapsule_New(managed, "dltensor", capsule_destructor);
+            if (!cap) {
+                managed->deleter(managed);
+                throw std::runtime_error("Failed to create DLPack capsule");
+            }
+            return nb::steal(cap);
+        });
 
     // AudioInfo class
     nb::class_<mlx_audio::AudioFileInfo>(m, "AudioInfo")
@@ -66,7 +129,7 @@ NB_MODULE(_core, m) {
                 nb::gil_scoped_release release;
                 return self.read_chunk();
             }();
-            if (result.first.shape(0) == 0) {
+            if (result.first.frames() == 0) {
                 throw nb::stop_iteration();
             }
             return result;
@@ -102,7 +165,7 @@ Raises:
           "dtype"_a = "float32",
           "resample_quality"_a = "default",
           nb::call_guard<nb::gil_scoped_release>(),
-          R"(Load audio from a file into an mlx.core.array.
+          R"(Load audio from a file into an AudioBuffer.
 
 Format support is backend-dependent:
 - macOS backend: WAV, MP3, AAC/M4A, FLAC, AIFF, CAF, and more via AudioToolbox.
@@ -122,7 +185,7 @@ Args:
         Ignored when no resampling occurs.
 
 Returns:
-    Tuple of (audio array, sample rate).
+    Tuple of (AudioBuffer, sample rate).
 
 Raises:
     FileNotFoundError: If the file does not exist.
@@ -130,17 +193,85 @@ Raises:
 )");
 
     // save()
-    m.def("save", &mlx_audio::save_audio,
-          "path"_a,
-          "audio"_a,
-          "sr"_a,
-          "layout"_a = "channels_last",
-          "encoding"_a = "float32",
-          "bitrate"_a = "auto",
-          "clip"_a = true,
-          "flac_compression"_a = "default",
-          nb::call_guard<nb::gil_scoped_release>(),
-          R"(Save an mlx.core.array to an audio file.
+    m.def("save", [](
+        const std::string& path,
+        nb::handle audio_obj,
+        int sr,
+        const std::string& layout,
+        const std::string& encoding,
+        const std::string& bitrate,
+        bool clip,
+        const std::string& flac_compression) {
+
+        Py_buffer view;
+        if (PyObject_GetBuffer(audio_obj.ptr(), &view, PyBUF_STRIDES | PyBUF_FORMAT) != 0) {
+            throw mlx_audio::value_error("save() requires an object supporting the Python buffer protocol");
+        }
+
+        struct PyBufferGuard {
+            Py_buffer* b;
+            ~PyBufferGuard() { PyBuffer_Release(b); }
+        } guard{&view};
+
+        if (view.itemsize != sizeof(float)) {
+            throw mlx_audio::value_error("save() requires float32 audio samples");
+        }
+
+        int64_t frames = 0;
+        int channels = 1;
+        int64_t stride_frame = 1;
+        int64_t stride_chan = 1;
+
+        if (view.ndim == 1) {
+            frames = view.shape[0];
+            channels = 1;
+            stride_frame = view.strides[0] / sizeof(float);
+            stride_chan = 1;
+        } else if (view.ndim == 2) {
+            if (layout == "channels_first") {
+                channels = static_cast<int>(view.shape[0]);
+                frames = view.shape[1];
+                stride_chan = view.strides[0] / sizeof(float);
+                stride_frame = view.strides[1] / sizeof(float);
+            } else {
+                frames = view.shape[0];
+                channels = static_cast<int>(view.shape[1]);
+                stride_frame = view.strides[0] / sizeof(float);
+                stride_chan = view.strides[1] / sizeof(float);
+            }
+        } else {
+            throw mlx_audio::value_error("save() requires 1D or 2D audio array, got " + std::to_string(view.ndim) + "D");
+        }
+
+        const float* data = static_cast<const float*>(view.buf);
+
+        {
+            nb::gil_scoped_release release;
+            mlx_audio::save_audio(
+                path,
+                data,
+                frames,
+                channels,
+                stride_frame,
+                stride_chan,
+                sr,
+                layout,
+                encoding,
+                bitrate,
+                clip,
+                flac_compression
+            );
+        }
+    },
+    "path"_a,
+    "audio"_a,
+    "sr"_a,
+    "layout"_a = "channels_last",
+    "encoding"_a = "float32",
+    "bitrate"_a = "auto",
+    "clip"_a = true,
+    "flac_compression"_a = "default",
+    R"(Save an audio buffer to a file.
 
 Output support is backend-dependent:
 - macOS backend: WAV (.wav), MP3 (.mp3), M4A/AAC (.m4a), FLAC (.flac), AIFF (.aiff), CAF (.caf).
@@ -148,21 +279,17 @@ Output support is backend-dependent:
 The format is determined by the file extension.
 
 The GIL is released during save, so this function can run on a background
-thread without blocking the Python interpreter. Any pending mlx.core.eval()
-is performed internally — callers do not need to evaluate the array first.
+thread without blocking the Python interpreter.
 
 Args:
     path: Output file path. Extension determines format.
-    audio: 1D or 2D float32/float16 mlx array. 1D treated as mono.
+    audio: 1D or 2D float32 array/buffer. 1D treated as mono.
     sr: Sample rate.
     layout: 'channels_last' or 'channels_first'.
-    encoding: Sample encoding — 'float32' (default), 'pcm16', 'pcm24', or 'alac' (Apple Lossless for .m4a).
+    encoding: Sample encoding — 'float32' (default), 'pcm16', 'pcm24', or 'alac'.
     bitrate: Lossy encode bitrate — 'auto' (default), '128k', '192k', '256k', '320k'.
-             Used for .m4a AAC and .mp3 output.
     clip: If True, clamp samples to [-1, 1] before writing.
-    flac_compression: 'default', or 'fast' for FLAC output: the encoder's lowest
-             compression setting, about twice as fast to write and a few percent
-             larger. Ignored by every other format.
+    flac_compression: 'default', or 'fast'.
 
 Raises:
     ValueError: For invalid arguments.
@@ -201,23 +328,92 @@ Args:
     quality: 'soxr_hq' (default) or 'soxr_vhq'.
 
 Returns:
-    Tuple of (audio array, target_sr).
+    Tuple of (AudioBuffer, target_sr).
 
 Raises:
     ValueError: If libsoxr support was not compiled in.
 )");
 
     // resample()
-    m.def("resample", &mlx_audio::resample_audio,
-          "audio"_a,
-          "in_sr"_a,
-          "out_sr"_a,
-          "quality"_a = "default",
-          nb::call_guard<nb::gil_scoped_release>(),
-          R"(Resample an in-memory audio array to a different sample rate.
+    m.def("resample", [](
+        nb::handle audio_obj,
+        int in_sr,
+        int out_sr,
+        const std::string& quality) -> mlx_audio::AudioBuffer {
+
+        Py_buffer view;
+        if (PyObject_GetBuffer(audio_obj.ptr(), &view, PyBUF_STRIDES | PyBUF_FORMAT) != 0) {
+            throw mlx_audio::value_error("resample() requires an object supporting the Python buffer protocol");
+        }
+
+        struct PyBufferGuard {
+            Py_buffer* b;
+            ~PyBufferGuard() { PyBuffer_Release(b); }
+        } guard{&view};
+
+        if (view.itemsize != sizeof(float)) {
+            throw mlx_audio::value_error("resample() requires float32 audio samples");
+        }
+
+        int64_t frames = 0;
+        int channels = 1;
+        int64_t stride_frame = 1;
+        int64_t stride_chan = 1;
+        int ndim = static_cast<int>(view.ndim);
+
+        if (ndim == 1) {
+            frames = view.shape[0];
+            channels = 1;
+            stride_frame = view.strides[0] / sizeof(float);
+            stride_chan = 1;
+        } else if (ndim == 2) {
+            frames = view.shape[0];
+            channels = static_cast<int>(view.shape[1]);
+            stride_frame = view.strides[0] / sizeof(float);
+            stride_chan = view.strides[1] / sizeof(float);
+        } else {
+            throw mlx_audio::value_error("resample() requires 1D or 2D audio array, got " + std::to_string(ndim) + "D");
+        }
+
+        const float* data = static_cast<const float*>(view.buf);
+
+        mlx_audio::AudioBuffer result;
+        {
+            nb::gil_scoped_release release;
+            result = mlx_audio::resample_audio(
+                data,
+                frames,
+                channels,
+                stride_frame,
+                stride_chan,
+                in_sr,
+                out_sr,
+                quality
+            );
+        }
+        if (ndim == 1) {
+            result.ndim = 1;
+            result.shape[0] = result.frames();
+            result.shape[1] = 1;
+            result.strides[0] = 1;
+            result.strides[1] = 1;
+        } else {
+            result.ndim = 2;
+            result.shape[0] = result.frames();
+            result.shape[1] = channels;
+            result.strides[0] = channels;
+            result.strides[1] = 1;
+        }
+        return result;
+    },
+    "audio"_a,
+    "in_sr"_a,
+    "out_sr"_a,
+    "quality"_a = "default",
+    R"(Resample an in-memory audio array to a different sample rate.
 
 Args:
-    audio: 1D (frames,) or 2D (frames, channels) float32/float16 mlx array.
+    audio: 1D (frames,) or 2D (frames, channels) float32 buffer.
     in_sr: Source sample rate (must be > 0).
     out_sr: Target sample rate (must be > 0).
     quality: Resampler quality — 'default', 'fastest', 'low', 'medium', 'high', or 'best'.
@@ -226,7 +422,7 @@ Args:
         On Linux, default quality modes use linear interpolation.
 
 Returns:
-    Resampled mlx array with same ndim and channel count.
+    Resampled AudioBuffer with same ndim and channel count.
     Returns the input unchanged when in_sr == out_sr.
 
 Raises:
@@ -289,7 +485,7 @@ Raises:
           "dtype"_a = "float32",
           R"(Create a streaming reader that yields audio chunks.
 
-Returns an iterator of (array, sample_rate) tuples. Each array has shape
+Returns an iterator of (AudioBuffer, sample_rate) tuples. Each buffer has shape
 [chunk_frames, channels] (channels_last). The final chunk may have fewer frames.
 
 Exactly one of chunk_frames or chunk_duration must be specified.
@@ -305,7 +501,7 @@ Args:
     dtype: Output dtype — 'float32' (default) or 'float16'.
 
 Returns:
-    AudioStreamReader iterator yielding (array, sample_rate) tuples.
+    AudioStreamReader iterator yielding (AudioBuffer, sample_rate) tuples.
 
 Raises:
     FileNotFoundError: If the file does not exist.

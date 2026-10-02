@@ -201,7 +201,7 @@ def load(
                 f"({sorted(_RESAMPLE_QUALITY_SOXR_VALUES)}); "
                 f"got resample_quality={resample_quality!r}"
             )
-        audio, out_sr = _get_core_module().load_streaming_resample(
+        raw_buffer, out_sr = _get_core_module().load_streaming_resample(
             _normalize_path(path),
             target_sr=int(sr),
             offset=offset,
@@ -211,6 +211,9 @@ def load(
             dtype=dtype,
             quality=resample_quality_norm,
         )
+        audio = mx.from_dlpack(raw_buffer)
+        if dtype == "float16" and audio.dtype != mx.float16:
+            audio = audio.astype(mx.float16)
         if request_stereo_for_fold:
             if layout == "channels_first":
                 audio = _compiled_mixdown_channels_first(audio, mono_mode)
@@ -237,7 +240,7 @@ def load(
         else resample_quality_norm
     )
 
-    audio, out_sr = _get_core_module().load(
+    raw_buffer, out_sr = _get_core_module().load(
         _normalize_path(path),
         sr=(None if deferred_resample else sr),
         offset=offset,
@@ -247,6 +250,9 @@ def load(
         dtype=dtype,
         resample_quality=native_load_quality,
     )
+    audio = mx.from_dlpack(raw_buffer)
+    if dtype == "float16" and audio.dtype != mx.float16:
+        audio = audio.astype(mx.float16)
 
     # Deferred Python-level resample: resample() handles channels_first by
     # transposing internally, so pass layout through rather than re-deriving.
@@ -322,19 +328,27 @@ def resample(audio, in_sr, out_sr, quality="default", layout="channels_last"):
             "without libsoxr support"
         )
 
+    audio = _as_mlx_array(audio)
+    if audio.dtype not in (mx.float32, mx.float16):
+        raise ValueError(f"resample() requires float32 or float16 audio, got {audio.dtype}")
+    if audio.dtype == mx.float16:
+        audio = audio.astype(mx.float32)
+
     transpose_2d = (
         layout_norm == _LAYOUT_CHANNELS_FIRST
-        and isinstance(audio, mx.array)
         and audio.ndim == 2
     )
     if transpose_2d:
         # The native resamplers copy strided input to row-major themselves.
         audio = mx.swapaxes(audio, 0, 1)
 
+    mx.eval(audio)
+
     if quality_norm == _RESAMPLE_QUALITY_TORCHAUDIO:
         result = _resample_torchaudio_compat(audio, int(in_sr), int(out_sr))
     else:
-        result = _get_core_module().resample(audio, in_sr, out_sr, quality=quality_norm)
+        raw_resampled = _get_core_module().resample(audio, in_sr, out_sr, quality=quality_norm)
+        result = mx.from_dlpack(raw_resampled)
 
     if transpose_2d and result.ndim == 2:
         # A zero-copy view; native readers handle column-major memory.
@@ -528,6 +542,54 @@ class _SqueezeMonoStreamReader:
         return chunk, sr
 
 
+class _MLXStreamReader:
+    """Wraps native AudioStreamReader to yield mx.array via DLPack."""
+
+    def __init__(self, base_reader, dtype="float32"):
+        self._base = base_reader
+        self._sample_rate = int(base_reader.sample_rate)
+        self._channels = int(base_reader.channels)
+        self._chunk_frames = int(base_reader.chunk_frames)
+        self._dtype = dtype
+
+    @property
+    def sample_rate(self):
+        return self._sample_rate
+
+    @property
+    def channels(self):
+        return self._channels
+
+    @property
+    def chunk_frames(self):
+        return self._chunk_frames
+
+    @property
+    def frames_read(self):
+        return self._base.frames_read
+
+    def at_eof(self):
+        return self._base.at_eof()
+
+    def read_chunk(self):
+        buf, sr = self._base.read_chunk()
+        chunk = mx.from_dlpack(buf)
+        if self._dtype == "float16" and chunk.dtype != mx.float16:
+            chunk = chunk.astype(mx.float16)
+        return chunk, sr
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        if self.at_eof():
+            raise StopIteration
+        chunk, sr = self.read_chunk()
+        if chunk.shape[0] == 0:
+            raise StopIteration
+        return chunk, sr
+
+
 def stream(
     path,
     chunk_frames=None,
@@ -553,7 +615,7 @@ def stream(
     core = _get_core_module()
     try:
         # Preferred path: native stream-level slicing support.
-        reader = core.stream(
+        native_reader = core.stream(
             _normalize_path(path),
             chunk_frames=chunk_frames,
             chunk_duration=chunk_duration,
@@ -563,6 +625,7 @@ def stream(
             duration=duration,
             dtype=dtype,
         )
+        reader = _MLXStreamReader(native_reader, dtype=dtype)
         if request_stereo_for_fold:
             reader = _MonoModeStreamReader(reader, mono_mode=mono_mode)
         if squeeze_mono and reader.channels == 1:
@@ -577,7 +640,7 @@ def stream(
         if "convert" in str(exc).lower():
             raise
         # Compatibility fallback for older native modules.
-        reader = core.stream(
+        native_reader = core.stream(
             _normalize_path(path),
             chunk_frames=chunk_frames,
             chunk_duration=chunk_duration,
@@ -585,6 +648,7 @@ def stream(
             mono=(False if request_stereo_for_fold else mono),
             dtype=dtype,
         )
+        reader = _MLXStreamReader(native_reader, dtype=dtype)
         if request_stereo_for_fold:
             reader = _MonoModeStreamReader(reader, mono_mode=mono_mode)
         if float(offset) != 0.0 or duration is not None:
@@ -628,7 +692,12 @@ def save(
     to write and a few percent larger. Other formats ignore it.
     """
     audio = _as_mlx_array(audio)
+    if audio.dtype not in (mx.float32, mx.float16):
+        raise ValueError(f"save() requires float32 or float16 audio, got {audio.dtype}")
+    if audio.dtype == mx.float16:
+        audio = audio.astype(mx.float32)
     resolved_layout = _detect_save_layout(audio, layout)
+    mx.eval(audio)
     return _get_core_module().save(
         _normalize_path(path),
         audio,

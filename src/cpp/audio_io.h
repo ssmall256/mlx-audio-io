@@ -4,10 +4,18 @@
 #include <optional>
 #include <stdexcept>
 #include <string>
-
-#include <mlx/mlx.h>
+#include <utility>
 
 namespace mlx_audio {
+
+/// Custom exception types for nanobind mapping.
+class file_not_found_error : public std::runtime_error {
+    using std::runtime_error::runtime_error;
+};
+
+class value_error : public std::invalid_argument {
+    using std::invalid_argument::invalid_argument;
+};
 
 /// Metadata about an audio file.
 struct AudioFileInfo {
@@ -19,21 +27,18 @@ struct AudioFileInfo {
     std::string container;
 };
 
-/// Custom exception types for nanobind mapping.
-class file_not_found_error : public std::runtime_error {
-    using std::runtime_error::runtime_error;
-};
+}  // namespace mlx_audio
 
-class value_error : public std::invalid_argument {
-    using std::invalid_argument::invalid_argument;
-};
+#include "audio_buffer.h"
 
-/// Get metadata about a WAV file without decoding samples.
+namespace mlx_audio {
+
+/// Get metadata about an audio file without decoding samples.
 AudioFileInfo get_info(const std::string& path);
 
-/// Load audio from a WAV file into an mlx::core::array.
-/// Returns (array, output_sample_rate).
-std::pair<mlx::core::array, int> load_audio(
+/// Load audio from a file into an AudioBuffer.
+/// Returns (audio_buffer, output_sample_rate).
+std::pair<AudioBuffer, int> load_audio(
     const std::string& path,
     std::optional<int> sr,
     double offset,
@@ -43,10 +48,14 @@ std::pair<mlx::core::array, int> load_audio(
     const std::string& dtype,
     const std::string& resample_quality);
 
-/// Save an mlx::core::array to an audio file.
+/// Save audio samples from raw float memory to an audio file.
 void save_audio(
     const std::string& path,
-    mlx::core::array audio,
+    const float* data,
+    int64_t frames,
+    int channels,
+    int64_t stride_frame,
+    int64_t stride_chan,
     int sr,
     const std::string& layout,
     const std::string& encoding,
@@ -54,9 +63,13 @@ void save_audio(
     bool clip,
     const std::string& flac_compression);
 
-/// Resample an in-memory audio array to a different sample rate.
-mlx::core::array resample_audio(
-    mlx::core::array audio,
+/// Resample in-memory audio samples to a different sample rate.
+AudioBuffer resample_audio(
+    const float* in_data,
+    int64_t in_frames,
+    int channels,
+    int64_t stride_frame,
+    int64_t stride_chan,
     int in_sr,
     int out_sr,
     const std::string& quality);

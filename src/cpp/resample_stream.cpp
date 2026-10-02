@@ -54,7 +54,7 @@ void mix_to_mono(const float* src, int64_t frames, int channels, float* dst) {
 
 // Stream the file at native SR, resample chunk-by-chunk through soxr,
 // write directly into a preallocated output buffer.
-std::pair<mlx::core::array, int> load_streaming_resample_impl(
+std::pair<AudioBuffer, int> load_streaming_resample_impl(
     const std::string& path,
     int target_sr,
     double offset,
@@ -183,13 +183,11 @@ std::pair<mlx::core::array, int> load_streaming_resample_impl(
 
     while (true) {
         auto chunk_result = reader.read_chunk();
-        mlx::core::array& chunk = chunk_result.first;
-        const int64_t chunk_frames = chunk.shape(0);
+        AudioBuffer& chunk = chunk_result.first;
+        const int64_t chunk_frames = chunk.frames();
         if (chunk_frames == 0) break;
 
-        // Ensure data is materialized and contiguous.
-        mlx::core::eval(chunk);
-        const float* chunk_data = chunk.data<float>();
+        const float* chunk_data = static_cast<const float*>(chunk.data());
         const float* in_ptr = chunk_data;
 
         if (mono && native_channels > 1) {
@@ -319,7 +317,7 @@ std::pair<mlx::core::array, int> load_streaming_resample_impl(
 
 }  // namespace
 
-std::pair<mlx::core::array, int> backend_load_audio_streaming_resample(
+std::pair<AudioBuffer, int> backend_load_audio_streaming_resample(
     const std::string& path,
     int target_sr,
     double offset,

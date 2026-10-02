@@ -8,14 +8,13 @@
 #include <utility>
 #include <vector>
 
-#include <mlx/mlx.h>
-
+#include "audio_buffer.h"
 #include "mp3_decoder.h"
 #include "raii_audio.h"
 
 namespace mlx_audio {
 
-/// Chunked audio file reader that yields fixed-size mlx arrays.
+/// Chunked audio file reader that yields fixed-size AudioBuffers.
 /// Not thread-safe — do not share instances across threads without
 /// external synchronization.
 class AudioStreamReader {
@@ -31,10 +30,10 @@ class AudioStreamReader {
     AudioStreamReader(AudioStreamReader&& other) noexcept;
     AudioStreamReader& operator=(AudioStreamReader&& other) noexcept;
 
-    /// Read the next chunk. Returns (array, sample_rate).
+    /// Read the next chunk. Returns (AudioBuffer, sample_rate).
     /// The final chunk may have fewer frames than chunk_frames().
-    /// Returns a 0-frame array once EOF is reached.
-    std::pair<mlx::core::array, int> read_chunk();
+    /// Returns a 0-frame buffer once EOF is reached.
+    std::pair<AudioBuffer, int> read_chunk();
 
     bool at_eof() const { return eof_; }
     int sample_rate() const { return out_sr_; }
@@ -52,7 +51,7 @@ class AudioStreamReader {
     int wav_format_tag_ = 0;
     int64_t wav_total_frames_ = 0;
     bool is_predecoded_ = false;
-    std::optional<mlx::core::array> predecoded_audio_;
+    AudioBuffer predecoded_audio_;
     const float* predecoded_data_ = nullptr;
     int64_t predecoded_total_frames_ = 0;
 

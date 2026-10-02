@@ -143,7 +143,7 @@ def _compatible_mlx_versions(build: dict) -> list[str]:
     elif isinstance(declared, str):
         versions = [part.strip() for part in declared.split(",") if part.strip()]
     build_version = _normalize_optional(build.get("build_mlx_version"))
-    if build_version and str(build_version).lower() != "unknown":
+    if build_version and str(build_version).lower() not in ("unknown", "abi-independent"):
         if str(build_version) not in versions:
             versions.append(str(build_version))
     return versions
@@ -363,11 +363,11 @@ def verify_compatibility(native_path: Path, build_info: dict[str, Any] | None = 
         supported = ", ".join(compatible)
         if runtime_mlx_version is None:
             raise RuntimeError(
-                "MLX runtime not found: the mlx-audio-io native binary requires one of "
-                f"mlx=={supported}, but `mlx` is not installed.\n"
-                "Install a matching MLX runtime before using mlx-audio-io."
+                "MLX runtime not found: the mlx-audio-io native binary requires an installed "
+                "`mlx` runtime.\n"
+                "Install an MLX runtime before using mlx-audio-io."
             )
-        if runtime_mlx_version not in compatible:
+        if "*" not in compatible and runtime_mlx_version not in compatible:
             message = (
                 "MLX version mismatch: the mlx-audio-io native binary was built against "
                 f"mlx=={build_mlx_version} and is verified against {supported}, but the "
@@ -402,7 +402,7 @@ def verify_nanobind_pairing(build: dict[str, Any]) -> None:
     build_mlx_version = _normalize_optional(build.get("build_mlx_version"))
     if not built_nanobind or not build_mlx_version:
         return
-    if str(built_nanobind).lower() == "unknown":
+    if str(built_nanobind).lower() in ("unknown", "independent") or str(build_mlx_version).lower() in ("unknown", "abi-independent"):
         return
     expected_full = _expected_nanobind(build_mlx_version)
     if expected_full is None:

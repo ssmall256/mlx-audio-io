@@ -3,31 +3,25 @@
 #include <string>
 #include <utility>
 
+#include "audio_buffer.h"
 #include "internal_utils.h"
 
 namespace mlx_audio::tensor_utils {
 
-/// Return an empty array with the right shape/dtype for a result tuple.
-inline std::pair<mlx::core::array, int> make_empty_audio_result(
+/// Return an empty AudioBuffer with the right shape/dtype for a result tuple.
+inline std::pair<AudioBuffer, int> make_empty_audio_result(
     int out_sr,
     int channels,
     bool mono,
     const std::string& layout,
     const std::string& dtype) {
     int out_channels = mono ? 1 : channels;
-    auto target_dtype = (dtype == "float16") ? mlx::core::float16 : mlx::core::float32;
-    mlx::core::Shape shape;
-    if (layout == "channels_last") {
-        shape = {0, static_cast<int32_t>(out_channels)};
-    } else {
-        shape = {static_cast<int32_t>(out_channels), 0};
-    }
-    return {mlx::core::array(std::initializer_list<int>{}, shape, target_dtype), out_sr};
+    return {AudioBuffer::make_empty(out_channels, layout, dtype), out_sr};
 }
 
-/// Apply mono mixdown, channels_first deinterleave, shape, and dtype to
-/// an interleaved float32 buffer. Takes ownership of buffer.
-inline std::pair<mlx::core::array, int> wrap_interleaved_audio_buffer(
+/// Apply mono mixdown, channels_first deinterleave, and wrap in AudioBuffer.
+/// Takes ownership of buffer.
+inline std::pair<AudioBuffer, int> wrap_interleaved_audio_buffer(
     float* buffer,
     int64_t actual_frames,
     int channels,
@@ -58,25 +52,29 @@ inline std::pair<mlx::core::array, int> wrap_interleaved_audio_buffer(
         buffer = planar_buf;
     }
 
-    mlx::core::Shape shape;
+    int64_t d0, d1, s0, s1;
     if (layout == "channels_first" && out_channels > 1) {
-        shape = {static_cast<int32_t>(out_channels), static_cast<int32_t>(actual_frames)};
+        d0 = out_channels;
+        d1 = actual_frames;
+        s0 = actual_frames;
+        s1 = 1;
     } else if (out_channels == 1 && layout == "channels_first") {
-        shape = {1, static_cast<int32_t>(actual_frames)};
+        d0 = 1;
+        d1 = actual_frames;
+        s0 = actual_frames;
+        s1 = 1;
     } else {
-        shape = {static_cast<int32_t>(actual_frames), static_cast<int32_t>(out_channels)};
+        d0 = actual_frames;
+        d1 = out_channels;
+        s0 = out_channels;
+        s1 = 1;
     }
 
-    // Copy into MLX-owned storage, then release native buffer immediately.
-    // This avoids cross-runtime lifetime issues when returning many chunks.
-    auto arr = mlx::core::array(buffer, std::move(shape), mlx::core::float32);
-    std::free(buffer);
+    size_t total_bytes = static_cast<size_t>(actual_frames) * out_channels * sizeof(float);
+    auto storage = std::make_shared<AudioStorage>(buffer, total_bytes, /*take_ownership=*/true);
+    AudioBuffer audio_buf(std::move(storage), d0, d1, s0, s1, 2, "float32");
 
-    if (dtype == "float16") {
-        arr = mlx::core::astype(arr, mlx::core::float16);
-    }
-
-    return {std::move(arr), out_sr};
+    return {std::move(audio_buf), out_sr};
 }
 
 }  // namespace mlx_audio::tensor_utils

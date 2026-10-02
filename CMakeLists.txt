@@ -57,40 +57,6 @@ execute_process(
 list(APPEND CMAKE_PREFIX_PATH "${NB_DIR}")
 find_package(nanobind CONFIG REQUIRED)
 
-# Find MLX
-execute_process(
-    COMMAND "${Python_EXECUTABLE}" -m mlx --cmake-dir
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    OUTPUT_VARIABLE MLX_DIR
-)
-find_package(MLX CONFIG REQUIRED PATHS "${MLX_DIR}")
-
-if(APPLE AND TARGET mlx)
-    get_target_property(MLX_IMPORTED_LINK_LIBS mlx INTERFACE_LINK_LIBRARIES)
-    if(MLX_IMPORTED_LINK_LIBS AND MLX_IMPORTED_LINK_LIBS MATCHES "Xcode-latest\\.app")
-        if(NOT CMAKE_OSX_SYSROOT)
-            execute_process(
-                COMMAND xcrun --sdk macosx --show-sdk-path
-                OUTPUT_VARIABLE CMAKE_OSX_SYSROOT
-                OUTPUT_STRIP_TRAILING_WHITESPACE
-            )
-        endif()
-        if(CMAKE_OSX_SYSROOT)
-            string(
-                REGEX REPLACE
-                    "/Applications/Xcode-latest\\.app/Contents/Developer/Platforms/MacOSX\\.platform/Developer/SDKs/MacOSX\\.sdk"
-                    "${CMAKE_OSX_SYSROOT}"
-                    MLX_IMPORTED_LINK_LIBS
-                    "${MLX_IMPORTED_LINK_LIBS}"
-            )
-            set_target_properties(
-                mlx
-                PROPERTIES INTERFACE_LINK_LIBRARIES "${MLX_IMPORTED_LINK_LIBS}"
-            )
-        endif()
-    endif()
-endif()
-
 set(BACKEND_SOURCES)
 set(LAME_SOURCES)
 if(APPLE)
@@ -129,14 +95,13 @@ else()
     message(FATAL_ERROR "Unsupported platform for mlx-audio-io")
 endif()
 
-# Build the _core extension module
+# Build the _core extension module (completely decoupled from MLX C++ ABI)
 nanobind_add_module(
     _core
     NB_STATIC
     STABLE_ABI
     LTO
     NOMINSIZE
-    NB_DOMAIN mlx
     src/cpp/bindings.cpp
     src/cpp/audio_io.cpp
     src/cpp/audio_stream.cpp
@@ -150,13 +115,14 @@ nanobind_add_module(
 
 target_include_directories(_core PRIVATE
     src/cpp
+    src/vendor
+    src/vendor/dlpack
     src/vendor/minimp3
     src/vendor/lame
     src/vendor/lame/libmp3lame
 )
-target_link_libraries(_core PRIVATE mlx)
 if(APPLE)
-    target_link_libraries(_core PRIVATE "-framework AudioToolbox" "-framework Accelerate")
+    target_link_libraries(_core PRIVATE "-framework AudioToolbox" "-framework Accelerate" "-framework CoreFoundation")
 endif()
 if(UNIX AND NOT APPLE)
     target_compile_definitions(_core PRIVATE MLX_AUDIO_IO_ENABLE_LIBAV=1)
@@ -195,87 +161,9 @@ if("${MLX_AUDIO_IO_WHEEL_VERSION}" STREQUAL "")
     set(MLX_AUDIO_IO_WHEEL_VERSION "unknown")
 endif()
 
-set(MLX_AUDIO_IO_BUILD_MLX_VERSION "")
-execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c "import importlib.metadata as m; print(m.version('mlx'))"
-    OUTPUT_VARIABLE MLX_AUDIO_IO_BUILD_MLX_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
-if("${MLX_AUDIO_IO_BUILD_MLX_VERSION}" STREQUAL "")
-    set(MLX_AUDIO_IO_BUILD_MLX_VERSION "unknown")
-endif()
-
-# MLX versions this binary is declared compatible with, as a comma-separated
-# list. MLX has no stable C++ ABI and no soname versioning, so this must only
-# ever list versions the build was actually compiled and tested against --
-# never an open range. Override at configure time once a version is verified:
-#   -DMLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS="0.31.2,0.31.3"
-if(NOT DEFINED MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS OR "${MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS}" STREQUAL "")
-    set(MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS "${MLX_AUDIO_IO_BUILD_MLX_VERSION}")
-endif()
-
-# nanobind must match the version MLX itself was built with. The extension
-# shares nanobind's type registry with mlx.core through NB_DOMAIN, so
-# mlx::core::array crosses the boundary using MLX's registered caster. A
-# mismatch compiles and links cleanly and then fails on the first call with
-# "Unable to convert function return value to a Python type" -- an error that
-# says nothing about nanobind. Known pairings: MLX 0.31.x -> nanobind 2.12.0,
-# MLX 0.32.0-0.32.2 -> 2.15.0, MLX 0.32.3 -> 3.0.1.
-execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c "import importlib.metadata as m; print(m.version('nanobind'))"
-    OUTPUT_VARIABLE MLX_AUDIO_IO_NANOBIND_VERSION
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
-)
-if("${MLX_AUDIO_IO_NANOBIND_VERSION}" STREQUAL "")
-    set(MLX_AUDIO_IO_NANOBIND_VERSION "unknown")
-endif()
-message(STATUS "mlx-audio-io: building against MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} with nanobind ${MLX_AUDIO_IO_NANOBIND_VERSION}")
-
-# A mismatch here does not degrade -- it produces a binary that imports and
-# then fails every call. Failing the build is the only signal a user gets,
-# because under `pip install` CMake output is captured and shown on failure
-# only, so message(WARNING) is invisible to exactly the person who needs it.
-set(MLX_AUDIO_IO_NANOBIND_EXPECTED "")
-if(MLX_AUDIO_IO_BUILD_MLX_VERSION VERSION_EQUAL "0.32.3")
-    set(MLX_AUDIO_IO_NANOBIND_EXPECTED "3.0.")
-    set(MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL "3.0.1")
-elseif(MLX_AUDIO_IO_BUILD_MLX_VERSION MATCHES "^0\\.31\\.")
-    set(MLX_AUDIO_IO_NANOBIND_EXPECTED "2.12.")
-    set(MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL "2.12.0")
-elseif(MLX_AUDIO_IO_BUILD_MLX_VERSION VERSION_GREATER_EQUAL "0.32.0"
-       AND MLX_AUDIO_IO_BUILD_MLX_VERSION VERSION_LESS "0.32.3")
-    set(MLX_AUDIO_IO_NANOBIND_EXPECTED "2.15.")
-    set(MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL "2.15.0")
-endif()
-if(NOT "${MLX_AUDIO_IO_NANOBIND_EXPECTED}" STREQUAL ""
-   AND NOT MLX_AUDIO_IO_NANOBIND_VERSION MATCHES "^${MLX_AUDIO_IO_NANOBIND_EXPECTED}")
-    if(MLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH)
-        message(WARNING
-            "MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} expects nanobind "
-            "${MLX_AUDIO_IO_NANOBIND_EXPECTED}x, found ${MLX_AUDIO_IO_NANOBIND_VERSION}. "
-            "Continuing because MLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH is set; "
-            "expect every call to fail with 'Unable to convert function return value'.")
-    else()
-        message(FATAL_ERROR
-            "nanobind/MLX mismatch: MLX ${MLX_AUDIO_IO_BUILD_MLX_VERSION} is built with "
-            "nanobind ${MLX_AUDIO_IO_NANOBIND_EXPECTED}x, but this build environment has "
-            "nanobind ${MLX_AUDIO_IO_NANOBIND_VERSION}.\n"
-            "The extension shares nanobind's type registry with mlx.core through "
-            "NB_DOMAIN, so a mismatch links cleanly and then fails on every call with "
-            "\"Unable to convert function return value to a Python type\".\n"
-            "Fix: pip install \"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL}\", or let the "
-            "build backend pick it for you (it does this automatically unless you passed "
-            "--no-build-isolation with nanobind already installed).\n"
-            "The full rebuild recipe, for a build that supplies its own dependencies:\n"
-            "  pip install \"mlx==${MLX_AUDIO_IO_BUILD_MLX_VERSION}\" "
-            "\"nanobind==${MLX_AUDIO_IO_NANOBIND_EXPECTED_FULL}\" scikit-build-core cmake ninja delocate\n"
-            "  pip install --force-reinstall --no-cache-dir --no-build-isolation "
-            "--no-binary mlx-audio-io --no-deps mlx-audio-io\n"
-            "To build anyway, configure with -DMLX_AUDIO_IO_ALLOW_NANOBIND_MISMATCH=ON.")
-    endif()
-endif()
+set(MLX_AUDIO_IO_BUILD_MLX_VERSION "abi-independent")
+set(MLX_AUDIO_IO_COMPATIBLE_MLX_VERSIONS "*")
+set(MLX_AUDIO_IO_NANOBIND_VERSION "independent")
 
 configure_file(
     "${CMAKE_SOURCE_DIR}/python/mlx_audio_io/_build_info.json.in"

@@ -48,24 +48,27 @@ bool is_soxr_quality(const std::string& quality) {
 }
 
 #if MLX_AUDIO_IO_ENABLE_SOXR
-mlx::core::array resample_with_soxr(
-    mlx::core::array audio,
+AudioBuffer resample_with_soxr(
+    const float* in_data,
+    int64_t in_frames,
+    int channels,
+    int64_t stride_frame,
+    int64_t stride_chan,
+    bool was_1d,
     int in_sr,
     int out_sr,
     const std::string& quality) {
-    bool was_1d = (audio.ndim() == 1);
-    if (audio.dtype() == mlx::core::float16) {
-        audio = mlx::core::astype(audio, mlx::core::float32);
-    }
-    if (was_1d) {
-        audio = mlx::core::reshape(audio, {audio.shape(0), 1});
-    }
-    // The resamplers read interleaved [frames, channels] memory linearly.
-    internal::materialize_row_major(audio);
 
-    const int64_t in_frames = audio.shape(0);
-    const int channels = audio.shape(1);
-    const float* in_data = audio.data<float>();
+    std::unique_ptr<float, decltype(&std::free)> interleaved(nullptr, std::free);
+    const float* in_buf_linear = in_data;
+    if (channels > 1 && !(stride_chan == 1 && stride_frame == channels)) {
+        size_t in_bytes = static_cast<size_t>(in_frames) * channels * sizeof(float);
+        interleaved.reset(static_cast<float*>(aligned_alloc_64(in_bytes)));
+        for (int c = 0; c < channels; ++c) {
+            strided_copy(in_data + c * stride_chan, stride_frame, interleaved.get() + c, channels, static_cast<int>(in_frames));
+        }
+        in_buf_linear = interleaved.get();
+    }
 
     int64_t expected_out_frames = static_cast<int64_t>(
         std::llround(static_cast<long double>(in_frames) * out_sr / in_sr));
@@ -79,17 +82,9 @@ mlx::core::array resample_with_soxr(
     float* out_buf = static_cast<float*>(aligned_alloc_64(out_bytes));
 
     if (in_frames == 0 || expected_out_frames == 0) {
-        mlx::core::Shape shape;
-        if (was_1d) {
-            shape = {0};
-        } else {
-            shape = {0, static_cast<int32_t>(channels)};
-        }
-        return mlx::core::array(
-            static_cast<void*>(out_buf),
-            std::move(shape),
-            mlx::core::float32,
-            aligned_free);
+        int64_t d0 = 0, d1 = channels, s0 = channels, s1 = 1;
+        auto storage = std::make_shared<AudioStorage>(out_buf, out_bytes, true);
+        return AudioBuffer(std::move(storage), d0, d1, s0, s1, 2, "float32");
     }
 
     const soxr_quality_spec_t q_spec =
@@ -109,7 +104,7 @@ mlx::core::array resample_with_soxr(
         &q_spec,
         &runtime_spec);
     if (err != nullptr || soxr == nullptr) {
-        aligned_free(out_buf);
+        std::free(out_buf);
         throw std::runtime_error(
             "Failed to create libsoxr resampler: " +
             std::string(err ? err : "unknown"));
@@ -118,7 +113,7 @@ mlx::core::array resample_with_soxr(
     size_t out_done = 0;
     err = soxr_process(
         soxr,
-        in_data,
+        in_buf_linear,
         static_cast<size_t>(in_frames),
         nullptr,
         out_buf,
@@ -126,7 +121,7 @@ mlx::core::array resample_with_soxr(
         &out_done);
     if (err != nullptr) {
         soxr_delete(soxr);
-        aligned_free(out_buf);
+        std::free(out_buf);
         throw std::runtime_error(
             "libsoxr process failed: " + std::string(err));
     }
@@ -142,23 +137,16 @@ mlx::core::array resample_with_soxr(
         &out_tail);
     soxr_delete(soxr);
     if (err != nullptr) {
-        aligned_free(out_buf);
+        std::free(out_buf);
         throw std::runtime_error(
             "libsoxr finalization failed: " + std::string(err));
     }
 
     const int64_t total_out = static_cast<int64_t>(out_done + out_tail);
-    mlx::core::Shape shape;
-    if (was_1d) {
-        shape = {static_cast<int32_t>(total_out)};
-    } else {
-        shape = {static_cast<int32_t>(total_out), static_cast<int32_t>(channels)};
-    }
-    return mlx::core::array(
-        static_cast<void*>(out_buf),
-        std::move(shape),
-        mlx::core::float32,
-        aligned_free);
+    int64_t d0 = total_out, d1 = channels, s0 = channels, s1 = 1;
+    size_t total_bytes = static_cast<size_t>(total_out) * channels * sizeof(float);
+    auto storage = std::make_shared<AudioStorage>(out_buf, total_bytes, true);
+    return AudioBuffer(std::move(storage), d0, d1, s0, s1, 2, "float32");
 }
 #endif
 
@@ -376,25 +364,17 @@ UInt32 parse_bitrate(const std::string& s) {
         "' for M4A. Use 'auto', '128k', '192k', '256k', or '320k'.");
 }
 
-/// Return an empty array with the right shape/dtype for offset-beyond-end.
-std::pair<mlx::core::array, int> make_empty_result(
+/// Return an empty AudioBuffer with the right shape/dtype for offset-beyond-end.
+std::pair<AudioBuffer, int> make_empty_result(
     int out_sr, int channels, bool mono,
     const std::string& layout, const std::string& dtype) {
     int out_channels = mono ? 1 : channels;
-    auto target_dtype = (dtype == "float16") ? mlx::core::float16 : mlx::core::float32;
-    mlx::core::Shape shape;
-    if (layout == "channels_last") {
-        shape = {0, static_cast<int32_t>(out_channels)};
-    } else {
-        shape = {static_cast<int32_t>(out_channels), 0};
-    }
-    return {mlx::core::array(
-        std::initializer_list<int>{}, shape, target_dtype), out_sr};
+    return {AudioBuffer::make_empty(out_channels, layout, dtype), out_sr};
 }
 
 /// Apply mono mixdown, channels_first deinterleave, shape, and dtype to
 /// an interleaved float32 buffer. Takes ownership of buffer.
-std::pair<mlx::core::array, int> wrap_audio_buffer(
+std::pair<AudioBuffer, int> wrap_audio_buffer(
     float* buffer, int64_t actual_frames, int channels, int out_sr,
     bool mono, const std::string& layout, const std::string& dtype) {
 
@@ -422,26 +402,29 @@ std::pair<mlx::core::array, int> wrap_audio_buffer(
         buffer = planar_buf;
     }
 
-    mlx::core::Shape shape;
+    int64_t d0, d1, s0, s1;
     if (layout == "channels_first" && out_channels > 1) {
-        shape = {static_cast<int32_t>(out_channels),
-                 static_cast<int32_t>(actual_frames)};
+        d0 = out_channels;
+        d1 = actual_frames;
+        s0 = actual_frames;
+        s1 = 1;
     } else if (out_channels == 1 && layout == "channels_first") {
-        shape = {1, static_cast<int32_t>(actual_frames)};
+        d0 = 1;
+        d1 = actual_frames;
+        s0 = actual_frames;
+        s1 = 1;
     } else {
-        shape = {static_cast<int32_t>(actual_frames),
-                 static_cast<int32_t>(out_channels)};
+        d0 = actual_frames;
+        d1 = out_channels;
+        s0 = out_channels;
+        s1 = 1;
     }
 
-    // Copy into MLX-owned storage, then release native buffer immediately.
-    auto arr = mlx::core::array(buffer, std::move(shape), mlx::core::float32);
-    std::free(buffer);
+    size_t total_bytes = static_cast<size_t>(actual_frames) * out_channels * sizeof(float);
+    auto storage = std::make_shared<AudioStorage>(buffer, total_bytes, /*take_ownership=*/true);
+    AudioBuffer audio_buf(std::move(storage), d0, d1, s0, s1, 2, "float32");
 
-    if (dtype == "float16") {
-        arr = mlx::core::astype(arr, mlx::core::float16);
-    }
-
-    return {std::move(arr), out_sr};
+    return {std::move(audio_buf), out_sr};
 }
 
 // ---------------------------------------------------------------------------
@@ -553,7 +536,7 @@ bool is_wav_path(const std::string& path) {
 }
 
 /// Fast WAV load via direct fread, bypassing AudioToolbox.
-std::pair<mlx::core::array, int> load_wav_fast(
+std::pair<AudioBuffer, int> load_wav_fast(
     const WavInfo& wav,
     const std::string& path,
     double offset,
@@ -695,7 +678,7 @@ std::pair<mlx::core::array, int> load_wav_fast(
 
 /// Fast MP3 decode at native sample rate using minimp3.
 /// Accepts a pre-opened decoder to avoid redundant file opens.
-std::pair<mlx::core::array, int> load_mp3_fast(
+std::pair<AudioBuffer, int> load_mp3_fast(
     ScopedMp3Decoder& dec,
     double offset,
     std::optional<double> duration,
@@ -815,7 +798,7 @@ AudioFileInfo backend_get_info(const std::string& path) {
 // load_audio
 // ---------------------------------------------------------------------------
 
-std::pair<mlx::core::array, int> backend_load_audio(
+std::pair<AudioBuffer, int> backend_load_audio(
     const std::string& path,
     std::optional<int> sr,
     double offset,
@@ -945,19 +928,8 @@ std::pair<mlx::core::array, int> backend_load_audio(
     int64_t start_frame_native = static_cast<int64_t>(std::floor(offset * native_sr));
     int64_t frames_to_read;
 
-    auto target_dtype = (dtype == "float16") ? mlx::core::float16 : mlx::core::float32;
-
     if (start_frame_native >= static_cast<int64_t>(native_frames)) {
-        // Offset beyond end: return empty tensor
-        int out_channels = mono ? 1 : channels;
-        mlx::core::Shape shape;
-        if (layout == "channels_last") {
-            shape = {0, static_cast<int32_t>(out_channels)};
-        } else {
-            shape = {static_cast<int32_t>(out_channels), 0};
-        }
-        return {mlx::core::array(
-            std::initializer_list<int>{}, shape, target_dtype), out_sr};
+        return make_empty_result(out_sr, channels, mono, layout, dtype);
     }
 
     int64_t remaining_native = static_cast<int64_t>(native_frames) - start_frame_native;
@@ -1063,6 +1035,7 @@ std::pair<mlx::core::array, int> backend_load_audio(
     }
 
     // --- Transform 2: channels_first deinterleave ---
+    int64_t d0, d1, s0, s1;
     if (layout == "channels_first" && out_channels > 1) {
         size_t planar_bytes =
             static_cast<size_t>(actual_frames) * out_channels * sizeof(float);
@@ -1079,31 +1052,27 @@ std::pair<mlx::core::array, int> backend_load_audio(
 
         std::free(buffer);
         buffer = planar_buf;
-    }
-
-    // --- Wrap in mlx::core::array ---
-    mlx::core::Shape shape;
-    if (layout == "channels_first" && out_channels > 1) {
-        shape = {static_cast<int32_t>(out_channels),
-                 static_cast<int32_t>(actual_frames)};
+        d0 = out_channels;
+        d1 = actual_frames;
+        s0 = actual_frames;
+        s1 = 1;
     } else if (out_channels == 1 && layout == "channels_first") {
-        shape = {1, static_cast<int32_t>(actual_frames)};
+        d0 = 1;
+        d1 = actual_frames;
+        s0 = actual_frames;
+        s1 = 1;
     } else {
-        shape = {static_cast<int32_t>(actual_frames),
-                 static_cast<int32_t>(out_channels)};
+        d0 = actual_frames;
+        d1 = out_channels;
+        s0 = out_channels;
+        s1 = 1;
     }
 
-    auto arr = mlx::core::array(
-        static_cast<void*>(buffer),
-        std::move(shape),
-        mlx::core::float32,
-        aligned_free);
+    size_t total_bytes = static_cast<size_t>(actual_frames) * out_channels * sizeof(float);
+    auto storage = std::make_shared<AudioStorage>(buffer, total_bytes, /*take_ownership=*/true);
+    AudioBuffer audio_buf(std::move(storage), d0, d1, s0, s1, 2, "float32");
 
-    if (dtype == "float16") {
-        arr = mlx::core::astype(arr, mlx::core::float16);
-    }
-
-    return {std::move(arr), out_sr};
+    return {std::move(audio_buf), out_sr};
 }
 
 // ---------------------------------------------------------------------------
@@ -1112,7 +1081,11 @@ std::pair<mlx::core::array, int> backend_load_audio(
 
 void backend_save_audio(
     const std::string& path,
-    mlx::core::array audio,
+    const float* data,
+    int64_t frames,
+    int channels,
+    int64_t stride_frame,
+    int64_t stride_chan,
     int sr,
     const std::string& layout,
     const std::string& encoding,
@@ -1126,20 +1099,8 @@ void backend_save_audio(
             "Invalid layout '" + layout +
             "'. Must be 'channels_last' or 'channels_first'.");
     }
-    if (audio.dtype() != mlx::core::float32 && audio.dtype() != mlx::core::float16) {
-        throw value_error("audio must be float32 or float16");
-    }
     if (sr <= 0) {
         throw value_error("sr must be > 0");
-    }
-    if (audio.dtype() == mlx::core::float16) {
-        audio = mlx::core::astype(audio, mlx::core::float32);
-    }
-    if (audio.ndim() == 1) {
-        audio = mlx::core::reshape(audio, {audio.shape(0), 1});
-    } else if (audio.ndim() != 2) {
-        throw value_error(
-            "audio must be 1D or 2D, got ndim=" + std::to_string(audio.ndim()));
     }
 
     // Determine output format from file extension
@@ -1204,39 +1165,22 @@ void backend_save_audio(
             break;
     }
 
-    // Determine frames and channels from shape + layout
-    int frames, channels;
-    if (layout == "channels_last") {
-        frames = audio.shape(0);
-        channels = audio.shape(1);
-    } else {
-        channels = audio.shape(0);
-        frames = audio.shape(1);
-    }
-
-    // Materialize without copying row- or column-contiguous input. Column-major
-    // memory of a [frames, channels] array is planar, and of a
-    // [channels, frames] array is interleaved.
-    const bool col_major = internal::materialize_for_linear_read(audio);
-    const bool planar = (layout == "channels_first") != col_major;
-
-    const float* data = audio.data<float>();
-
     // Temporary buffer for interleaving (planar memory with >1 channel)
     std::unique_ptr<float, decltype(&std::free)> interleaved(nullptr, std::free);
     const float* write_data = data;
 
-    if (planar && channels > 1) {
+    bool is_interleaved = (channels <= 1) || (stride_chan == 1 && stride_frame == channels);
+    if (!is_interleaved && channels > 1) {
         size_t buf_bytes = static_cast<size_t>(frames) * channels * sizeof(float);
         interleaved.reset(static_cast<float*>(aligned_alloc_64(buf_bytes)));
 
         for (int c = 0; c < channels; ++c) {
             strided_copy(
-                data + c * frames,       // source: planar
-                1,                       // source stride
-                interleaved.get() + c,   // dest: interleaved
-                channels,                // dest stride
-                frames);
+                data + c * stride_chan,
+                stride_frame,
+                interleaved.get() + c,
+                channels,
+                static_cast<int>(frames));
         }
 
         write_data = interleaved.get();
@@ -1429,7 +1373,7 @@ void backend_save_audio(
 
         int frames_written = 0;
         while (frames_written < frames) {
-            int chunk = std::min(kChunkFrames, frames - frames_written);
+            int chunk = static_cast<int>(std::min<int64_t>(kChunkFrames, frames - frames_written));
             const float* src = write_data +
                 static_cast<size_t>(frames_written) * channels;
 
@@ -1468,8 +1412,12 @@ void backend_save_audio(
 // resample_audio — in-memory sample rate conversion via AudioConverter
 // ---------------------------------------------------------------------------
 
-mlx::core::array backend_resample_audio(
-    mlx::core::array audio,
+AudioBuffer backend_resample_audio(
+    const float* in_data,
+    int64_t in_frames,
+    int channels,
+    int64_t stride_frame,
+    int64_t stride_chan,
     int in_sr,
     int out_sr,
     const std::string& quality) {
@@ -1481,19 +1429,26 @@ mlx::core::array backend_resample_audio(
     if (out_sr <= 0) {
         throw value_error("out_sr must be > 0, got " + std::to_string(out_sr));
     }
-    if (audio.dtype() != mlx::core::float32 && audio.dtype() != mlx::core::float16) {
-        throw value_error("audio must be float32 or float16");
+    if (in_frames == 0) {
+        return AudioBuffer::make_empty(channels, "channels_last", "float32");
     }
-    if (audio.ndim() != 1 && audio.ndim() != 2) {
-        throw value_error(
-            "audio must be 1D or 2D, got ndim=" + std::to_string(audio.ndim()));
-    }
+
     if (is_soxr_quality(quality)) {
 #if MLX_AUDIO_IO_ENABLE_SOXR
         if (in_sr == out_sr) {
-            return audio;
+            size_t total_bytes = static_cast<size_t>(in_frames) * channels * sizeof(float);
+            float* out_buf = static_cast<float*>(aligned_alloc_64(total_bytes > 0 ? total_bytes : 64));
+            if (channels <= 1 || (stride_chan == 1 && stride_frame == channels)) {
+                if (total_bytes > 0) std::memcpy(out_buf, in_data, total_bytes);
+            } else {
+                for (int c = 0; c < channels; ++c) {
+                    strided_copy(in_data + c * stride_chan, stride_frame, out_buf + c, channels, static_cast<int>(in_frames));
+                }
+            }
+            auto storage = std::make_shared<AudioStorage>(out_buf, total_bytes, true);
+            return AudioBuffer(std::move(storage), in_frames, channels, channels, 1, 2, "float32");
         }
-        return resample_with_soxr(std::move(audio), in_sr, out_sr, quality);
+        return resample_with_soxr(in_data, in_frames, channels, stride_frame, stride_chan, false, in_sr, out_sr, quality);
 #else
         throw value_error(
             "quality '" + quality +
@@ -1504,23 +1459,30 @@ mlx::core::array backend_resample_audio(
 
     // No-op
     if (in_sr == out_sr) {
-        return audio;
+        size_t total_bytes = static_cast<size_t>(in_frames) * channels * sizeof(float);
+        float* out_buf = static_cast<float*>(aligned_alloc_64(total_bytes > 0 ? total_bytes : 64));
+        if (channels <= 1 || (stride_chan == 1 && stride_frame == channels)) {
+            if (total_bytes > 0) std::memcpy(out_buf, in_data, total_bytes);
+        } else {
+            for (int c = 0; c < channels; ++c) {
+                strided_copy(in_data + c * stride_chan, stride_frame, out_buf + c, channels, static_cast<int>(in_frames));
+            }
+        }
+        auto storage = std::make_shared<AudioStorage>(out_buf, total_bytes, true);
+        return AudioBuffer(std::move(storage), in_frames, channels, channels, 1, 2, "float32");
     }
 
-    // Upcast float16 → float32 and materialize
-    bool was_1d = (audio.ndim() == 1);
-    if (audio.dtype() == mlx::core::float16) {
-        audio = mlx::core::astype(audio, mlx::core::float32);
+    // Interleaved buffer for AudioConverter
+    std::unique_ptr<float, decltype(&std::free)> interleaved(nullptr, std::free);
+    const float* in_buf_linear = in_data;
+    if (channels > 1 && !(stride_chan == 1 && stride_frame == channels)) {
+        size_t in_bytes = static_cast<size_t>(in_frames) * channels * sizeof(float);
+        interleaved.reset(static_cast<float*>(aligned_alloc_64(in_bytes)));
+        for (int c = 0; c < channels; ++c) {
+            strided_copy(in_data + c * stride_chan, stride_frame, interleaved.get() + c, channels, static_cast<int>(in_frames));
+        }
+        in_buf_linear = interleaved.get();
     }
-    if (was_1d) {
-        audio = mlx::core::reshape(audio, {audio.shape(0), 1});
-    }
-    // The resamplers read interleaved [frames, channels] memory linearly.
-    internal::materialize_row_major(audio);
-
-    int64_t in_frames = audio.shape(0);
-    int channels = audio.shape(1);
-    const float* in_data = audio.data<float>();
 
     // Estimate output frame count
     int64_t out_frames = static_cast<int64_t>(
@@ -1551,7 +1513,7 @@ mlx::core::array backend_resample_audio(
         int64_t frames_remaining;
         int channels;
     };
-    FeedState state{in_data, in_frames, channels};
+    FeedState state{in_buf_linear, in_frames, channels};
 
     auto input_callback = [](
         AudioConverterRef /*conv*/,
@@ -1605,19 +1567,10 @@ mlx::core::array backend_resample_audio(
 
     AudioConverterDispose(converter);
 
-    // Wrap in mlx array
-    mlx::core::Shape shape;
-    if (was_1d) {
-        shape = {static_cast<int32_t>(total_out)};
-    } else {
-        shape = {static_cast<int32_t>(total_out), static_cast<int32_t>(channels)};
-    }
-
-    return mlx::core::array(
-        static_cast<void*>(out_buf),
-        std::move(shape),
-        mlx::core::float32,
-        aligned_free);
+    int64_t d0 = total_out, d1 = channels, s0 = channels, s1 = 1;
+    size_t total_bytes = static_cast<size_t>(total_out) * channels * sizeof(float);
+    auto storage = std::make_shared<AudioStorage>(out_buf, total_bytes, true);
+    return AudioBuffer(std::move(storage), d0, d1, s0, s1, 2, "float32");
 }
 
 }  // namespace mlx_audio

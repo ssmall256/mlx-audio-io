@@ -700,17 +700,16 @@ AudioStreamReader::AudioStreamReader(
                 "float32",
                 "default");
 
-            predecoded_audio_.emplace(std::move(predecoded.first));
-            mlx::core::eval(*predecoded_audio_);
+            predecoded_audio_ = std::move(predecoded.first);
 
-            if (predecoded_audio_->ndim() != 2) {
+            if (predecoded_audio_.ndim != 2) {
                 throw std::runtime_error("Unexpected predecoded audio shape for stream()");
             }
 
-            predecoded_data_ = predecoded_audio_->data<float>();
-            predecoded_total_frames_ = predecoded_audio_->shape(0);
+            predecoded_data_ = static_cast<const float*>(predecoded_audio_.data());
+            predecoded_total_frames_ = predecoded_audio_.shape[0];
             out_sr_ = predecoded.second;
-            out_channels_ = static_cast<int>(predecoded_audio_->shape(1));
+            out_channels_ = static_cast<int>(predecoded_audio_.shape[1]);
             native_channels_ = out_channels_;
             max_frames_to_emit_ = predecoded_total_frames_;
             is_predecoded_ = true;
@@ -1028,7 +1027,7 @@ AudioStreamReader& AudioStreamReader::operator=(AudioStreamReader&& other) noexc
     return *this;
 }
 
-std::pair<mlx::core::array, int> AudioStreamReader::read_chunk() {
+std::pair<AudioBuffer, int> AudioStreamReader::read_chunk() {
     if (eof_) {
         return tensor_utils::make_empty_audio_result(
             out_sr_, out_channels_, false, "channels_last", dtype_);
