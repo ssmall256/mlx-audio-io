@@ -5,6 +5,42 @@ All notable changes to this project are documented in this file.
 Entries before 1.3.12 were reconstructed from the commit history after the fact,
 so they summarise what shipped rather than what was announced at the time.
 
+## Unreleased
+
+### Added
+
+- `save(..., flac_compression="fast")` writes FLAC with the encoder's lowest
+  compression setting: about 2x faster to encode (0.09 s vs 0.19 s for a minute
+  of stereo on macOS) for files a few percent larger. `"default"` is unchanged;
+  other formats ignore the option. On Linux it is libav compression level 0.
+
+### Fixed
+
+- `save()` wrote scrambled audio for any input that was not row-contiguous: the
+  native writers read `data<float>()` linearly and ignored strides. A `.T` or
+  `swapaxes` view, a column slice, or a zero-copy DLPack import with
+  non-default strides (which MLX 0.32.3 preserves) therefore produced a file
+  whose channels were interleaved blocks of the wrong samples. Row- and
+  column-contiguous input is now written without a copy (column-major memory
+  is treated as the transposed layout); anything else is copied to row-major
+  first. The native resamplers make their input row-major the same way.
+- `resample(..., layout="channels_first")` no longer copies its input and output
+  to row-major; it returns a zero-copy transposed view.
+- `save()` no longer imports numpy. Non-MLX inputs are imported with
+  `mx.asarray`, which shares memory with any DLPack or buffer-protocol array.
+- MP3 files now carry the LAME tag that records the encoder delay and padding.
+  LAME reserves an empty first frame for it, which was never filled in, so every
+  decoder (minimp3, ffmpeg, AudioToolbox) played that frame as silence and kept
+  the delay: audio came back 2257 samples (51 ms at 44.1 kHz) late and padded at
+  the end. A round trip now returns the original length and alignment.
+- macOS FLAC: `encoding="pcm16"` now writes 16-bit samples; it was ignored and
+  every FLAC file was 24-bit. `encoding="pcm24"` is accepted (it was rejected,
+  although 24-bit is what was being written), on Linux as well.
+- macOS FLAC: audio shorter than one 4608-frame packet was written as a bare
+  header that no decoder could open. Such streams now use one packet of their
+  own length. AudioToolbox cannot write fewer than 192 frames, so that now
+  raises a `ValueError` instead of producing a corrupt file.
+
 ## 1.3.21 - 2026-10-01
 
 ### Added

@@ -138,6 +138,7 @@ Raises:
           "encoding"_a = "float32",
           "bitrate"_a = "auto",
           "clip"_a = true,
+          "flac_compression"_a = "default",
           nb::call_guard<nb::gil_scoped_release>(),
           R"(Save an mlx.core.array to an audio file.
 
@@ -159,6 +160,9 @@ Args:
     bitrate: Lossy encode bitrate — 'auto' (default), '128k', '192k', '256k', '320k'.
              Used for .m4a AAC and .mp3 output.
     clip: If True, clamp samples to [-1, 1] before writing.
+    flac_compression: 'default', or 'fast' for FLAC output: the encoder's lowest
+             compression setting, about twice as fast to write and a few percent
+             larger. Ignored by every other format.
 
 Raises:
     ValueError: For invalid arguments.

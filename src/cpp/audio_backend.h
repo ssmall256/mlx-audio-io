@@ -23,7 +23,8 @@ void backend_save_audio(
     const std::string& layout,
     const std::string& encoding,
     const std::string& bitrate,
-    bool clip);
+    bool clip,
+    const std::string& flac_compression);
 
 mlx::core::array backend_resample_audio(
     mlx::core::array audio,

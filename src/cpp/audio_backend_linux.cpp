@@ -761,7 +761,8 @@ void save_via_libav(
     int sr,
     const std::string& transcode_codec,
     const std::string& transcode_bitrate,
-    AVSampleFormat preferred_sample_fmt) {
+    AVSampleFormat preferred_sample_fmt,
+    int compression_level) {
     const AVCodecID codec_id = codec_id_for_transcode_codec(transcode_codec);
     if (codec_id == AV_CODEC_ID_NONE) {
         throw value_error(
@@ -814,6 +815,15 @@ void save_via_libav(
     if (!transcode_bitrate.empty()) {
         const std::string label = (ext == ".mp3") ? "MP3" : "M4A";
         codec_ctx->bit_rate = parse_libav_bitrate_bps(transcode_bitrate, label);
+    }
+
+    if (compression_level >= 0) {
+        codec_ctx->compression_level = compression_level;
+    }
+    if (codec_id == AV_CODEC_ID_FLAC && codec_ctx->sample_fmt == AV_SAMPLE_FMT_S32) {
+        // FLAC stores 24-bit samples in S32; say so, rather than have libav warn
+        // on every write that it is falling back to 24 bits.
+        codec_ctx->bits_per_raw_sample = 24;
     }
 
     if (out_ctx->oformat->flags & AVFMT_GLOBALHEADER) {
@@ -1585,7 +1595,8 @@ void backend_save_audio(
     const std::string& layout,
     const std::string& encoding,
     const std::string& bitrate,
-    bool clip) {
+    bool clip,
+    const std::string& flac_compression) {
     if (layout != "channels_last" && layout != "channels_first") {
         throw value_error(
             "Invalid layout '" + layout +
@@ -1628,14 +1639,18 @@ void backend_save_audio(
         frames = audio.shape(1);
     }
 
-    mlx::core::eval(audio);
+    // Materialize without copying row- or column-contiguous input. Column-major
+    // memory of a [frames, channels] array is planar, and of a
+    // [channels, frames] array is interleaved.
+    const bool col_major = internal::materialize_for_linear_read(audio);
+    const bool planar = (layout == "channels_first") != col_major;
 
     const float* data = audio.data<float>();
 
     std::unique_ptr<float, decltype(&std::free)> interleaved(nullptr, std::free);
     const float* write_data = data;
 
-    if (layout == "channels_first" && channels > 1) {
+    if (planar && channels > 1) {
         size_t bytes = static_cast<size_t>(frames) * channels * sizeof(float);
         interleaved.reset(static_cast<float*>(aligned_alloc_64(bytes)));
 
@@ -1712,10 +1727,11 @@ void backend_save_audio(
         if (bitrate != "auto") {
             throw value_error("bitrate is not supported for .flac on Linux backend");
         }
-        if (encoding != "auto" && encoding != "float32" && encoding != "pcm16") {
+        if (encoding != "auto" && encoding != "float32" && encoding != "pcm16" &&
+            encoding != "pcm24") {
             throw value_error(
                 "Unsupported encoding '" + encoding +
-                "' for .flac on Linux backend. Use 'auto', 'float32', or 'pcm16'.");
+                "' for .flac on Linux backend. Use 'auto', 'float32', 'pcm16', or 'pcm24'.");
         }
         transcode_codec = "flac";
         libav_preferred_fmt =
@@ -1795,7 +1811,9 @@ void backend_save_audio(
         sr,
         transcode_codec,
         transcode_bitrate,
-        libav_preferred_fmt);
+        libav_preferred_fmt,
+        // FLAC "fast" is libav's compression level 0; -1 keeps the encoder default.
+        (transcode_codec == "flac" && flac_compression == "fast") ? 0 : -1);
 }
 
 // ---------------------------------------------------------------------------
@@ -1841,7 +1859,8 @@ mlx::core::array backend_resample_audio(
     if (was_1d) {
         audio = mlx::core::reshape(audio, {audio.shape(0), 1});
     }
-    mlx::core::eval(audio);
+    // The resamplers read interleaved [frames, channels] memory linearly.
+    internal::materialize_row_major(audio);
 
     int64_t in_frames = audio.shape(0);
     int channels = audio.shape(1);

@@ -1,6 +1,7 @@
 #include "mp3_encoder.h"
 #include "lame.h"
 
+#include <algorithm>
 #include <stdexcept>
 #include <vector>
 
@@ -53,6 +54,12 @@ void ScopedMp3Encoder::init(int sample_rate, int channels, int bitrate_kbps) {
 
     // Near-best quality, good speed trade-off
     lame_set_quality(impl_->gfp, 2);
+
+    // Reserve the Xing/LAME tag frame (filled in by flush()) so decoders can
+    // trim LAME's encoder delay and padding, and keep it the first bytes of
+    // the stream by writing no automatic ID3 tags.
+    lame_set_bWriteVbrTag(impl_->gfp, 1);
+    lame_set_write_id3tag_automatic(impl_->gfp, 0);
 
     int ret = lame_init_params(impl_->gfp);
     if (ret < 0) {
@@ -118,6 +125,20 @@ void ScopedMp3Encoder::flush() {
             "lame_encode_flush failed (error " + std::to_string(bytes_written) + ")");
     }
     impl_->mp3_buffer.resize(old_size + bytes_written);
+
+    // LAME emitted an empty frame first; replace it with the final tag, which
+    // records the encoder delay and padding. Without it every decoder plays
+    // that empty frame as silence and keeps the delay, so the audio comes back
+    // 2257 samples late and padded at the end.
+    size_t tag_size = lame_get_lametag_frame(impl_->gfp, nullptr, 0);
+    if (tag_size > 0) {
+        std::vector<unsigned char> tag(tag_size);
+        size_t written = lame_get_lametag_frame(impl_->gfp, tag.data(), tag.size());
+        if (written > tag.size() || written > impl_->mp3_buffer.size()) {
+            throw std::runtime_error("lame_get_lametag_frame returned an oversized tag");
+        }
+        std::copy(tag.begin(), tag.begin() + written, impl_->mp3_buffer.begin());
+    }
 }
 
 const unsigned char* ScopedMp3Encoder::data() const {

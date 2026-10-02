@@ -670,6 +670,173 @@ class TestSaveMP3:
             save("/tmp/test.mp3", audio, 44100, encoding="alac")
 
 
+class TestSaveStrided:
+    """save() must honour strides: data<>() alone reads raw memory linearly."""
+
+    @staticmethod
+    def _interleaved(frames=4800, channels=2):
+        audio = mx.random.uniform(-0.5, 0.5, (frames, channels), key=mx.random.key(7))
+        mx.eval(audio)
+        return audio
+
+    @staticmethod
+    def _roundtrip(audio, layout, suffix=".wav"):
+        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as f:
+            path = f.name
+        try:
+            save(path, audio, 48000, layout=layout)
+            loaded, _ = load(path)
+            mx.eval(loaded)
+            return loaded
+        finally:
+            os.unlink(path)
+
+    @pytest.mark.parametrize("suffix", [".wav", ".flac", ".caf"])
+    def test_channels_first_transposed_view(self, suffix):
+        """A [channels, frames] .T view of interleaved memory is column-major."""
+        expected = self._interleaved()
+        view = expected.T
+        mx.eval(view)
+        loaded = self._roundtrip(view, "channels_first", suffix)
+        assert mx.max(mx.abs(loaded - expected)).item() < 1e-4
+
+    @pytest.mark.parametrize("suffix", [".wav", ".flac", ".caf"])
+    def test_channels_last_transposed_view(self, suffix):
+        """A [frames, channels] .T view of planar memory is column-major."""
+        expected = self._interleaved()
+        planar = mx.contiguous(expected.T)
+        view = planar.T
+        mx.eval(view)
+        loaded = self._roundtrip(view, "channels_last", suffix)
+        assert mx.max(mx.abs(loaded - expected)).item() < 1e-4
+
+    def test_auto_layout_transposed_view(self):
+        expected = self._interleaved()
+        loaded = self._roundtrip(expected.T, "auto")
+        assert loaded.shape == expected.shape
+        assert mx.max(mx.abs(loaded - expected)).item() < 1e-6
+
+    def test_strided_slice(self):
+        """A column slice is neither row- nor column-contiguous."""
+        wide = self._interleaved(channels=4)
+        view = wide[:, 1:3]
+        mx.eval(view)
+        loaded = self._roundtrip(view, "channels_last")
+        assert mx.max(mx.abs(loaded - view)).item() < 1e-6
+
+    def test_stem_slice_of_batched_output(self):
+        """A stem taken from a [stems, channels, frames] batch is an offset view."""
+        stems = mx.random.uniform(-0.5, 0.5, (4, 2, 4800), key=mx.random.key(3))
+        mx.eval(stems)
+        for index in range(stems.shape[0]):
+            loaded = self._roundtrip(stems[index], "channels_first")
+            assert mx.max(mx.abs(loaded - stems[index].T)).item() < 1e-6
+
+    def test_mp3_transposed_view_matches_contiguous(self):
+        expected = self._interleaved(frames=48000)
+        contiguous = self._roundtrip(expected, "channels_last", ".mp3")
+        strided = self._roundtrip(expected.T, "channels_first", ".mp3")
+        assert mx.max(mx.abs(contiguous - strided)).item() < 1e-6
+
+
+@pytest.mark.apple_only
+class TestSaveFLACEncoding:
+    """AudioToolbox FLAC: bit depth, pcm24, and streams shorter than a packet."""
+
+    @staticmethod
+    def _roundtrip(frames, encoding="pcm16"):
+        audio = mx.random.uniform(-0.5, 0.5, (2, frames), key=mx.random.key(frames))
+        mx.eval(audio)
+        with tempfile.NamedTemporaryFile(suffix=".flac", delete=False) as f:
+            path = f.name
+        try:
+            save(path, audio, 44100, layout="channels_first", encoding=encoding)
+            loaded, _ = load(path, layout="channels_first")
+            mx.eval(loaded)
+            return audio, loaded
+        finally:
+            os.unlink(path)
+
+    @pytest.mark.parametrize("frames", [192, 1000, 4095, 4607, 4608, 9001])
+    def test_short_streams_round_trip(self, frames):
+        """Under one 4608-frame packet the encoder used to write a bare header."""
+        audio, loaded = self._roundtrip(frames)
+        assert loaded.shape == audio.shape
+        assert mx.max(mx.abs(loaded - audio)).item() < 1e-4
+
+    def test_shorter_than_smallest_block_is_rejected(self):
+        with pytest.raises(ValueError, match="at least 192 frames"):
+            self._roundtrip(191)
+
+    def test_pcm16_writes_16_bit_samples(self):
+        audio, loaded = self._roundtrip(44100, "pcm16")
+        error = mx.max(mx.abs(loaded - audio)).item()
+        assert 1e-6 < error < 1e-4
+
+    @pytest.mark.parametrize("encoding", ["pcm24", "float32"])
+    def test_pcm24_and_float32_write_24_bit_samples(self, encoding):
+        audio, loaded = self._roundtrip(44100, encoding)
+        assert mx.max(mx.abs(loaded - audio)).item() < 1e-6
+
+
+class TestSaveFLACCompression:
+    @staticmethod
+    def _write(path, audio, compression):
+        save(path, audio, 44100, layout="channels_first", encoding="pcm16",
+             flac_compression=compression)
+        return os.path.getsize(path)
+
+    def test_fast_is_lossless_and_not_smaller(self, tmp_path):
+        t = mx.arange(44100 * 5) / 44100
+        tone = 0.3 * mx.sin(2 * math.pi * 220 * t) + 0.05 * mx.random.uniform(
+            -1, 1, t.shape, key=mx.random.key(9))
+        audio = mx.stack([tone, tone * 0.5])
+        mx.eval(audio)
+        default_size = self._write(str(tmp_path / "default.flac"), audio, "default")
+        fast_size = self._write(str(tmp_path / "fast.flac"), audio, "fast")
+        default_audio, _ = load(str(tmp_path / "default.flac"), layout="channels_first")
+        fast_audio, _ = load(str(tmp_path / "fast.flac"), layout="channels_first")
+        assert mx.array_equal(default_audio, fast_audio).item()
+        assert fast_size >= default_size
+
+    def test_invalid_value_is_rejected(self, tmp_path):
+        audio = mx.zeros((2, 4800))
+        with pytest.raises(ValueError, match="flac_compression"):
+            save(str(tmp_path / "x.flac"), audio, 48000, layout="channels_first",
+                 flac_compression="best")
+
+    def test_other_formats_ignore_it(self, tmp_path):
+        audio = mx.zeros((2, 4800))
+        save(str(tmp_path / "x.wav"), audio, 48000, layout="channels_first", flac_compression="fast")
+        assert os.path.getsize(tmp_path / "x.wav") > 0
+
+
+@pytest.mark.apple_only
+class TestSaveMP3Gapless:
+    """The LAME tag must record encoder delay and padding so decoders trim them."""
+
+    @pytest.mark.parametrize("frames", [100, 1000, 9000, 88200])
+    @pytest.mark.parametrize("bitrate", ["auto", "320k"])
+    def test_length_and_alignment_round_trip(self, frames, bitrate):
+        clicks = [frames // 4, frames // 2, 3 * frames // 4]
+        audio = mx.zeros((frames,)).at[mx.array(clicks)].add(0.8)
+        audio = mx.stack([audio, audio])
+        mx.eval(audio)
+        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            path = f.name
+        try:
+            save(path, audio, 44100, layout="channels_first", bitrate=bitrate)
+            loaded, _ = load(path, layout="channels_first")
+            mx.eval(loaded)
+        finally:
+            os.unlink(path)
+        assert loaded.shape == audio.shape
+        window = max(frames // 8, 1)
+        for click in clicks:
+            segment = mx.abs(loaded[0, click - window : click + window])
+            assert int(mx.argmax(segment).item()) + click - window == click
+
+
 class TestSaveNumpy:
     def test_roundtrip_numpy(self):
         """Save from numpy array, load back, check values."""

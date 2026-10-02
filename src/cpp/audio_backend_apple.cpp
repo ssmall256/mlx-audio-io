@@ -60,7 +60,8 @@ mlx::core::array resample_with_soxr(
     if (was_1d) {
         audio = mlx::core::reshape(audio, {audio.shape(0), 1});
     }
-    mlx::core::eval(audio);
+    // The resamplers read interleaved [frames, channels] memory linearly.
+    internal::materialize_row_major(audio);
 
     const int64_t in_frames = audio.shape(0);
     const int channels = audio.shape(1);
@@ -310,7 +311,25 @@ AudioStreamBasicDescription make_aac_format(int sr, int channels) {
 }
 
 /// Create a FLAC AudioStreamBasicDescription.
-AudioStreamBasicDescription make_flac_format(int sr, int channels) {
+// AudioToolbox's FLAC encoder emits nothing until one full packet is buffered,
+// so a stream shorter than its default 4608-frame packet is written as a bare
+// header that no decoder can open. It accepts any packet size from 192 frames.
+constexpr int kFlacDefaultFramesPerPacket = 4608;
+constexpr int kFlacMinFramesPerPacket = 192;
+
+/// Create a FLAC AudioStreamBasicDescription.
+///
+/// FLAC stores integers only: "pcm16" writes 16-bit samples; every other
+/// encoding writes 24-bit, the encoder's own default. Streams shorter than a
+/// default packet use one packet of exactly their length.
+AudioStreamBasicDescription make_flac_format(
+    int sr, int channels, const std::string& encoding, int frames) {
+    if (frames > 0 && frames < kFlacMinFramesPerPacket) {
+        throw value_error(
+            "FLAC output needs at least " + std::to_string(kFlacMinFramesPerPacket) +
+            " frames on macOS (AudioToolbox's smallest FLAC block), got " +
+            std::to_string(frames) + ". Write WAV for audio this short.");
+    }
     AudioStreamBasicDescription fmt = {};
     fmt.mSampleRate = static_cast<Float64>(sr);
     fmt.mFormatID = kAudioFormatFLAC;
@@ -318,8 +337,13 @@ AudioStreamBasicDescription make_flac_format(int sr, int channels) {
     fmt.mBytesPerFrame = 0;
     fmt.mBitsPerChannel = 0;
     fmt.mBytesPerPacket = 0;
-    fmt.mFramesPerPacket = 0;
-    fmt.mFormatFlags = 0;
+    fmt.mFramesPerPacket = (frames > 0 && frames < kFlacDefaultFramesPerPacket)
+        ? static_cast<UInt32>(frames)
+        : 0;
+    // The Apple Lossless source-depth flags apply to FLAC as well.
+    fmt.mFormatFlags = (encoding == "pcm16")
+        ? kAppleLosslessFormatFlag_16BitSourceData
+        : kAppleLosslessFormatFlag_24BitSourceData;
     return fmt;
 }
 
@@ -1093,7 +1117,8 @@ void backend_save_audio(
     const std::string& layout,
     const std::string& encoding,
     const std::string& bitrate,
-    bool clip) {
+    bool clip,
+    const std::string& flac_compression) {
 
     // --- Validate inputs ---
     if (layout != "channels_last" && layout != "channels_first") {
@@ -1156,10 +1181,11 @@ void backend_save_audio(
             if (bitrate != "auto") {
                 throw value_error("bitrate is not supported for .flac on macOS backend");
             }
-            if (encoding != "float32" && encoding != "auto" && encoding != "pcm16") {
+            if (encoding != "float32" && encoding != "auto" && encoding != "pcm16" &&
+                encoding != "pcm24") {
                 throw value_error(
                     "Unsupported encoding '" + encoding +
-                    "' for FLAC. Use 'auto', 'float32', or 'pcm16'.");
+                    "' for FLAC. Use 'auto', 'float32', 'pcm16', or 'pcm24'.");
             }
             break;
         case OutputFormat::ALAC:
@@ -1188,16 +1214,19 @@ void backend_save_audio(
         frames = audio.shape(1);
     }
 
-    // Materialize the array on CPU
-    mlx::core::eval(audio);
+    // Materialize without copying row- or column-contiguous input. Column-major
+    // memory of a [frames, channels] array is planar, and of a
+    // [channels, frames] array is interleaved.
+    const bool col_major = internal::materialize_for_linear_read(audio);
+    const bool planar = (layout == "channels_first") != col_major;
 
     const float* data = audio.data<float>();
 
-    // Temporary buffer for interleaving (channels_first with >1 channel)
+    // Temporary buffer for interleaving (planar memory with >1 channel)
     std::unique_ptr<float, decltype(&std::free)> interleaved(nullptr, std::free);
     const float* write_data = data;
 
-    if (layout == "channels_first" && channels > 1) {
+    if (planar && channels > 1) {
         size_t buf_bytes = static_cast<size_t>(frames) * channels * sizeof(float);
         interleaved.reset(static_cast<float*>(aligned_alloc_64(buf_bytes)));
 
@@ -1287,7 +1316,7 @@ void backend_save_audio(
             needs_client_format = true;
             break;
         case OutputFormat::FLAC:
-            file_fmt = make_flac_format(sr, channels);
+            file_fmt = make_flac_format(sr, channels, encoding, frames);
             needs_client_format = true;
             break;
         case OutputFormat::ALAC:
@@ -1339,6 +1368,32 @@ void backend_save_audio(
                     converter, kAudioConverterEncodeBitRate,
                     sizeof(br), &br);
             }
+        }
+    }
+
+    // FLAC "fast": the encoder's lowest quality setting is its fastest
+    // compression level (about 2x faster to write, a few percent larger).
+    // Every other value encodes like the default.
+    if (out_fmt.kind == OutputFormat::FLAC && flac_compression == "fast") {
+        AudioConverterRef converter = nullptr;
+        UInt32 conv_size = sizeof(converter);
+        status = ExtAudioFileGetProperty(
+            ext_file.get(), kExtAudioFileProperty_AudioConverter, &conv_size, &converter);
+        if (status == noErr && converter != nullptr) {
+            UInt32 quality = kAudioConverterQuality_Min;
+            status = AudioConverterSetProperty(
+                converter, kAudioConverterCodecQuality, sizeof(quality), &quality);
+            if (status == noErr) {
+                // Make ExtAudioFile pick up the changed converter settings.
+                CFArrayRef config = nullptr;
+                status = ExtAudioFileSetProperty(
+                    ext_file.get(), kExtAudioFileProperty_ConverterConfig,
+                    sizeof(config), &config);
+            }
+        }
+        if (status != noErr) {
+            throw std::runtime_error(
+                "Failed to set FLAC compression: OSStatus " + osstatus_to_string(status));
         }
     }
 
@@ -1460,7 +1515,8 @@ mlx::core::array backend_resample_audio(
     if (was_1d) {
         audio = mlx::core::reshape(audio, {audio.shape(0), 1});
     }
-    mlx::core::eval(audio);
+    // The resamplers read interleaved [frames, channels] memory linearly.
+    internal::materialize_row_major(audio);
 
     int64_t in_frames = audio.shape(0);
     int channels = audio.shape(1);

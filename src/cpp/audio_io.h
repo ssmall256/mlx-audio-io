@@ -51,7 +51,8 @@ void save_audio(
     const std::string& layout,
     const std::string& encoding,
     const std::string& bitrate,
-    bool clip);
+    bool clip,
+    const std::string& flac_compression);
 
 /// Resample an in-memory audio array to a different sample rate.
 mlx::core::array resample_audio(

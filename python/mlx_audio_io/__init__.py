@@ -328,10 +328,8 @@ def resample(audio, in_sr, out_sr, quality="default", layout="channels_last"):
         and audio.ndim == 2
     )
     if transpose_2d:
-        # swapaxes alone returns a non-contiguous view; the C++ resamplers
-        # read linearly from data<float>() and would misinterpret the memory
-        # layout. Force a contiguous copy in the transposed orientation.
-        audio = mx.contiguous(mx.swapaxes(audio, 0, 1))
+        # The native resamplers copy strided input to row-major themselves.
+        audio = mx.swapaxes(audio, 0, 1)
 
     if quality_norm == _RESAMPLE_QUALITY_TORCHAUDIO:
         result = _resample_torchaudio_compat(audio, int(in_sr), int(out_sr))
@@ -339,9 +337,8 @@ def resample(audio, in_sr, out_sr, quality="default", layout="channels_last"):
         result = _get_core_module().resample(audio, in_sr, out_sr, quality=quality_norm)
 
     if transpose_2d and result.ndim == 2:
-        # Contiguous copy so downstream native calls (save, resample again,
-        # etc.) that read linearly see the correct channels_first layout.
-        result = mx.contiguous(mx.swapaxes(result, 0, 1))
+        # A zero-copy view; native readers handle column-major memory.
+        result = mx.swapaxes(result, 0, 1)
     return result
 
 
@@ -597,32 +594,40 @@ def stream(
         return reader
 
 
-def _maybe_convert_numpy(audio):
-    try:
-        import numpy as np
-    except ImportError:
+def _as_mlx_array(audio):
+    """Return ``audio`` as an mlx array, sharing memory when possible.
+
+    Non-MLX inputs (any DLPack or buffer-protocol array) are imported with
+    ``copy=None``, which keeps the source's memory and strides; the native
+    writer handles strided layouts itself.
+    """
+    if isinstance(audio, mx.array):
         return audio
-
-    if isinstance(audio, np.ndarray):
-        import mlx.core as mx
-
-        try:
-            return mx.asarray(audio, copy=False)
-        except (TypeError, ValueError):
-            return mx.array(audio)
-
-    return audio
+    return mx.asarray(audio)
 
 
-def save(path, audio, sr, layout="auto", encoding="float32", bitrate="auto", clip=True):
-    """Save an mlx array (or numpy array) to an audio file.
+def save(
+    path,
+    audio,
+    sr,
+    layout="auto",
+    encoding="float32",
+    bitrate="auto",
+    clip=True,
+    flac_compression="default",
+):
+    """Save an mlx array (or any DLPack/buffer-protocol array) to an audio file.
 
     ``layout`` defaults to ``"auto"``, which automatically determines whether
     the input is ``"channels_last"`` [frames, channels] or ``"channels_first"``
     [channels, frames] based on shape (e.g. channel counts <= 8 with frames > 8).
     Can also be explicitly set to ``"channels_last"`` or ``"channels_first"``.
+
+    ``flac_compression`` is ``"default"`` or ``"fast"``. For FLAC output,
+    ``"fast"`` uses the encoder's lowest compression setting: about twice as fast
+    to write and a few percent larger. Other formats ignore it.
     """
-    audio = _maybe_convert_numpy(audio)
+    audio = _as_mlx_array(audio)
     resolved_layout = _detect_save_layout(audio, layout)
     return _get_core_module().save(
         _normalize_path(path),
@@ -632,6 +637,7 @@ def save(path, audio, sr, layout="auto", encoding="float32", bitrate="auto", cli
         encoding=encoding,
         bitrate=bitrate,
         clip=clip,
+        flac_compression=flac_compression,
     )
 
 

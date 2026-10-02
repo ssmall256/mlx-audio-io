@@ -177,6 +177,16 @@ class TestLayout:
             rtol=0.0, atol=1e-6,
         )
 
+    def test_channels_last_strided_view_matches_contiguous(self):
+        # A [frames, channels] view of planar memory is column-major; the
+        # native resampler must not read it as interleaved.
+        audio_cl = _make_sine(48000, duration=0.25, channels=2)
+        view = mx.contiguous(mx.swapaxes(audio_cl, 0, 1)).T
+        mx.eval(view)
+        expected = mac.resample(audio_cl, 48000, 44100, layout="channels_last")
+        out = mac.resample(view, 48000, 44100, layout="channels_last")
+        assert mx.array_equal(out, expected).item()
+
     def test_channels_first_preserves_shape(self):
         audio_cf = mx.swapaxes(_make_sine(48000, duration=0.25, channels=2), 0, 1)
         assert audio_cf.shape == (2, 12000)

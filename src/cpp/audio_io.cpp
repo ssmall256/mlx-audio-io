@@ -27,8 +27,13 @@ void save_audio(
     const std::string& layout,
     const std::string& encoding,
     const std::string& bitrate,
-    bool clip) {
-    backend_save_audio(path, std::move(audio), sr, layout, encoding, bitrate, clip);
+    bool clip,
+    const std::string& flac_compression) {
+    if (flac_compression != "default" && flac_compression != "fast") {
+        throw value_error(
+            "flac_compression must be 'default' or 'fast', got '" + flac_compression + "'");
+    }
+    backend_save_audio(path, std::move(audio), sr, layout, encoding, bitrate, clip, flac_compression);
 }
 
 mlx::core::array resample_audio(
