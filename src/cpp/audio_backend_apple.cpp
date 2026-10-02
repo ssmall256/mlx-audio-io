@@ -1165,6 +1165,15 @@ void backend_save_audio(
             break;
     }
 
+    // WAV: one fused pass reads the caller's layout through its strides, with
+    // no interleaved copy of the whole signal and no separate clip pass.
+    if (out_fmt.file_type == kAudioFileWAVEType) {
+        std::string wav_encoding = encoding == "auto" ? "float32" : encoding;
+        internal::write_wav_strided(
+            path, data, frames, channels, stride_frame, stride_chan, sr, wav_encoding, clip);
+        return;
+    }
+
     // Temporary buffer for interleaving (planar memory with >1 channel)
     std::unique_ptr<float, decltype(&std::free)> interleaved(nullptr, std::free);
     const float* write_data = data;
@@ -1197,17 +1206,6 @@ void backend_save_audio(
     // MP3: use vendored LAME encoder (AudioToolbox has no MP3 encoder)
     if (out_fmt.kind == OutputFormat::MP3) {
         save_mp3_lame(path, write_data, frames, channels, sr, bitrate);
-        return;
-    }
-
-    // WAV fast path: direct binary write (bypasses AudioToolbox ExtAudioFile)
-    if (out_fmt.file_type == kAudioFileWAVEType) {
-        std::string wav_encoding = encoding;
-        if (wav_encoding == "auto") {
-            wav_encoding = "float32";
-        }
-        bool needs_clip = clip && !interleaved;
-        internal::write_interleaved_wav(path, write_data, frames, channels, sr, wav_encoding, needs_clip);
         return;
     }
 

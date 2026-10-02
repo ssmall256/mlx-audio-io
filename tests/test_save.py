@@ -1028,3 +1028,69 @@ class TestSaveAIFFCAF:
             assert meta.channels == 1
         finally:
             os.unlink(path)
+
+
+class TestSaveWavQuantizationIsExact:
+    """The fused strided WAV writer quantizes exactly as documented.
+
+    Every sample is checked against a Python model of the rule: x <= -1 maps
+    to negative full scale, x >= 1 to positive full scale, everything else to
+    round-half-even(float32(x * full_scale)). Exactly -1 and exact .5 ties are
+    the cases a vectorized path gets wrong first.
+    """
+
+    @staticmethod
+    def _signal(n):
+        import random
+        import struct
+
+        rng = random.Random(7)
+        edges = [-2.0, -1.0000001, -1.0, -0.99999, -0.5, -1e-9, 0.0, 1e-9, 0.5, 0.99999, 1.0, 1.0000001, 2.0]
+        ties = [(k + 0.5) / 32767.0 for k in range(-40, 40)]
+        values = edges + ties + [rng.uniform(-1.2, 1.2) for _ in range(n)]
+        # Round-trip through float32 so the model sees exactly what MLX stores.
+        return [struct.unpack("f", struct.pack("f", v))[0] for v in values]
+
+    @staticmethod
+    def _expected(x, full):
+        import struct
+
+        if x <= -1.0:
+            return -full - 1
+        if x >= 1.0:
+            return full
+        product = struct.unpack("f", struct.pack("f", x * float(full)))[0]
+        return round(product)
+
+    @staticmethod
+    def _read_ints(path, width):
+        import wave
+
+        with wave.open(str(path), "rb") as w:
+            raw = w.readframes(w.getnframes())
+        if width == 2:
+            return [int.from_bytes(raw[i:i + 2], "little", signed=True) for i in range(0, len(raw), 2)]
+        return [int.from_bytes(raw[i:i + 3], "little", signed=True) for i in range(0, len(raw), 3)]
+
+    @pytest.mark.parametrize("encoding,width,full", [("pcm16", 2, 32767), ("pcm24", 3, 8388607)])
+    @pytest.mark.parametrize("channels", [1, 2, 3])
+    @pytest.mark.parametrize("view", ["channels_first", "channels_last", "transposed_view", "column_slice"])
+    @pytest.mark.parametrize("clip", [True, False])
+    def test_every_sample_matches_the_rule(self, tmp_path, encoding, width, full, channels, view, clip):
+        base = self._signal(301)
+        planar = mx.array([[v * (1.0 - 0.05 * c) for v in base] for c in range(channels)], dtype=mx.float32)
+        if view == "channels_first":
+            arr, layout = planar, "channels_first"
+        elif view == "channels_last":
+            arr, layout = mx.contiguous(planar.T), "channels_last"
+        elif view == "transposed_view":
+            arr, layout = planar.T, "channels_last"
+        else:
+            arr, layout = planar[:, 3:-5], "channels_first"
+        mx.eval(arr)
+        path = tmp_path / "q.wav"
+        save(str(path), arr, 44100, layout=layout, encoding=encoding, clip=clip)
+
+        frames = arr if layout == "channels_last" else arr.T
+        expected = [self._expected(x, full) for x in frames.reshape(-1).tolist()]
+        assert self._read_ints(path, width) == expected

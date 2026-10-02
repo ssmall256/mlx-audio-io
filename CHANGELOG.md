@@ -18,6 +18,14 @@ so they summarise what shipped rather than what was announced at the time.
   about 15% faster.
 - Requires `mlx>=0.32.0` (the first release with `mx.from_dlpack`), with no
   upper bound.
+- WAV saves are about 2.5x faster (a 3:15 stereo stem in PCM16: 7.6 ms
+  instead of 19 ms on an M4 Max). One fused pass reads the caller's layout
+  through its strides into a small interleaved chunk, quantizes it (NEON on
+  Apple Silicon) and writes it, so `channels_first` input no longer gets a
+  heap copy of the whole signal and no separate clip pass runs. Output is
+  byte-identical to 1.3.22 for PCM16, PCM24 and float32, clip on or off; a new
+  test checks every sample against the quantization rule. On Linux the WAV
+  path also no longer copies the whole signal just to clip it.
 
 ## 1.3.22 - 2026-10-02
 

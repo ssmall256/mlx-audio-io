@@ -1619,6 +1619,28 @@ void backend_save_audio(
             ".wav, .mp3, .flac, .m4a, .aiff, .caf");
     }
 
+    if (output_is_wav) {
+        if (bitrate != "auto") {
+            throw value_error("bitrate is only supported for encoded formats, not WAV");
+        }
+
+        std::string wav_encoding = encoding;
+        if (wav_encoding == "auto") {
+            wav_encoding = "float32";
+        }
+        if (wav_encoding != "float32" && wav_encoding != "pcm16" && wav_encoding != "pcm24") {
+            throw value_error(
+                "Unsupported encoding '" + encoding +
+                "' for .wav on Linux backend. Use 'float32', 'pcm16', or 'pcm24'.");
+        }
+
+        // One fused pass reads the caller's layout through its strides, with no
+        // interleaved or clipped copy of the whole signal.
+        internal::write_wav_strided(
+            path, data, frames, channels, stride_frame, stride_chan, sr, wav_encoding, clip);
+        return;
+    }
+
     std::unique_ptr<float, decltype(&std::free)> interleaved(nullptr, std::free);
     const float* write_data = data;
 
@@ -1654,25 +1676,6 @@ void backend_save_audio(
             clipped.get()[i] = std::max(-1.0f, std::min(1.0f, write_data[i]));
         }
         write_data = clipped.get();
-    }
-
-    if (output_is_wav) {
-        if (bitrate != "auto") {
-            throw value_error("bitrate is only supported for encoded formats, not WAV");
-        }
-
-        std::string wav_encoding = encoding;
-        if (wav_encoding == "auto") {
-            wav_encoding = "float32";
-        }
-        if (wav_encoding != "float32" && wav_encoding != "pcm16" && wav_encoding != "pcm24") {
-            throw value_error(
-                "Unsupported encoding '" + encoding +
-                "' for .wav on Linux backend. Use 'float32', 'pcm16', or 'pcm24'.");
-        }
-
-        internal::write_interleaved_wav(path, write_data, frames, channels, sr, wav_encoding);
-        return;
     }
 
     std::string transcode_codec;
