@@ -138,13 +138,14 @@ inline void quantize_pcm16_block(const float* in, int16_t* out, size_t n) {
     }
 }
 
-inline void clip_block(float* buf, size_t n) {
+// Clip `n` samples from `src` into `dst` (which may be `src`).
+inline void clip_block(const float* src, float* dst, size_t n) {
 #if defined(__APPLE__)
     float lo = -1.0f, hi = 1.0f;
-    vDSP_vclip(buf, 1, &lo, &hi, buf, 1, static_cast<vDSP_Length>(n));
+    vDSP_vclip(src, 1, &lo, &hi, dst, 1, static_cast<vDSP_Length>(n));
 #else
     for (size_t j = 0; j < n; ++j) {
-        buf[j] = std::max(-1.0f, std::min(1.0f, buf[j]));
+        dst[j] = std::max(-1.0f, std::min(1.0f, src[j]));
     }
 #endif
 }
@@ -193,9 +194,14 @@ inline void write_wav_strided(
         }
         for (size_t f0 = 0; f0 < total_frames; f0 += chunk_frames) {
             size_t n = std::min(chunk_frames, total_frames - f0);
-            gather_interleaved(data, f0, n, channels, stride_frame, stride_chan, staging.get());
-            if (clip) {
-                clip_block(staging.get(), n * channels);
+            if (contiguous_interleaved) {
+                // Clip straight from the caller's samples: one pass, no copy.
+                clip_block(data + f0 * channels, staging.get(), n * channels);
+            } else {
+                gather_interleaved(data, f0, n, channels, stride_frame, stride_chan, staging.get());
+                if (clip) {
+                    clip_block(staging.get(), staging.get(), n * channels);
+                }
             }
             put(staging.get(), n * channels * sizeof(float));
         }
